@@ -44,6 +44,7 @@ class AssemblyAIProvider implements TranscriptionProvider {
       body: JSON.stringify({
         audio_url: upload_url,
         speaker_labels: true, // Enable speaker identification
+        speakers_expected: 2, // Exactly 2 speakers for service calls
         auto_chapters: false,
         filter_profanity: false,
         format_text: true,
@@ -98,12 +99,18 @@ class AssemblyAIProvider implements TranscriptionProvider {
   }
 
   private formatTranscriptWithSpeakers(result: any): string {
-    console.log('AssemblyAI result structure:', {
-      hasUtterances: !!result.utterances,
-      utteranceCount: result.utterances?.length || 0,
-      hasText: !!result.text,
-      textLength: result.text?.length || 0
-    })
+    console.log('=== AssemblyAI Raw Result Analysis ===')
+    console.log('Result keys:', Object.keys(result))
+    console.log('Has utterances:', !!result.utterances)
+    console.log('Utterance count:', result.utterances?.length || 0)
+    console.log('Has text:', !!result.text)
+    console.log('Text length:', result.text?.length || 0)
+    console.log('Status:', result.status)
+    
+    if (result.utterances && result.utterances.length > 0) {
+      console.log('Sample utterance structure:', result.utterances[0])
+      console.log('All speakers detected:', [...new Set(result.utterances.map((u: any) => u.speaker))])
+    }
 
     if (!result.utterances || result.utterances.length === 0) {
       console.log('No utterances found, using basic transcript')
@@ -111,14 +118,16 @@ class AssemblyAIProvider implements TranscriptionProvider {
       const text = result.text || 'Transcription completed but no text returned'
       
       // Try to add basic speaker detection for service calls
-      return this.addBasicSpeakerLabelsToText(text)
+      const fallback = this.addBasicSpeakerLabelsToText(text)
+      console.log('Fallback transcript preview:', fallback.substring(0, 500))
+      return fallback
     }
 
     console.log('Found utterances, formatting with speakers...')
     
     // First pass: analyze all utterances to determine who is likely technician vs customer
     const speakerAnalysis = this.analyzeSpeakerRoles(result.utterances)
-    console.log('Speaker analysis:', speakerAnalysis)
+    console.log('Speaker role analysis result:', speakerAnalysis)
     
     // Format with proper speaker labels from AssemblyAI
     const formatted = result.utterances
@@ -129,11 +138,27 @@ class AssemblyAIProvider implements TranscriptionProvider {
         // Format timestamp if available
         const timestamp = utterance.start ? `[${this.formatTimestamp(utterance.start)}]` : ''
         
-        return `${speakerRole}${timestamp ? ' ' + timestamp : ''}: ${utterance.text}`
+        const formattedLine = `${speakerRole}${timestamp ? ' ' + timestamp : ''}: ${utterance.text}`
+        
+        // Log first few utterances for debugging
+        if (index < 3) {
+          console.log(`Utterance ${index + 1}:`, {
+            original_speaker: utterance.speaker,
+            mapped_role: speakerRole,
+            timestamp,
+            text_preview: utterance.text.substring(0, 100)
+          })
+        }
+        
+        return formattedLine
       })
       .join('\n\n')
 
-    console.log('Formatted transcript with speakers, length:', formatted.length)
+    console.log('=== Final Formatted Transcript ===')
+    console.log('Total lines:', formatted.split('\n\n').length)
+    console.log('Character count:', formatted.length)
+    console.log('Preview (first 800 chars):', formatted.substring(0, 800))
+    
     return formatted
   }
 

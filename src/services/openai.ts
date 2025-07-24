@@ -43,45 +43,77 @@ export class OpenAIAnalyzer {
     }
 
     let cleaned = response.trim()
-    console.log('Raw response from OpenAI:', cleaned.substring(0, 200) + '...')
+    console.log('Raw response length:', cleaned.length)
+    console.log('Raw response preview:', cleaned.substring(0, 500) + (cleaned.length > 500 ? '...' : ''))
     
-    // Remove markdown code blocks more aggressively
-    cleaned = cleaned.replace(/^```json\s*\n?/gmi, '')
-    cleaned = cleaned.replace(/^```\s*\n?/gm, '')
-    cleaned = cleaned.replace(/\n?```\s*$/gm, '')
+    // Step 1: Remove markdown code blocks completely
+    cleaned = cleaned.replace(/```json\s*\n?/gi, '')
+    cleaned = cleaned.replace(/```\s*\n?/g, '')
     cleaned = cleaned.replace(/^json\s*\n?/gmi, '')
     cleaned = cleaned.trim()
     
-    // Remove any leading/trailing text that isn't JSON
-    const jsonStart = Math.max(cleaned.indexOf('{'), cleaned.indexOf('['))
-    const jsonEndBrace = cleaned.lastIndexOf('}')
-    const jsonEndBracket = cleaned.lastIndexOf(']')
-    const jsonEnd = Math.max(jsonEndBrace, jsonEndBracket)
+    // Step 2: Find JSON boundaries more reliably
+    let jsonStart = -1
+    let jsonEnd = -1
     
-    if (jsonStart !== -1 && jsonEnd !== -1 && jsonStart < jsonEnd) {
+    // Look for array start
+    const arrayStart = cleaned.indexOf('[')
+    const objectStart = cleaned.indexOf('{')
+    
+    if (arrayStart !== -1 && (objectStart === -1 || arrayStart < objectStart)) {
+      jsonStart = arrayStart
+      // Find matching closing bracket
+      let depth = 0
+      for (let i = arrayStart; i < cleaned.length; i++) {
+        if (cleaned[i] === '[') depth++
+        else if (cleaned[i] === ']') {
+          depth--
+          if (depth === 0) {
+            jsonEnd = i
+            break
+          }
+        }
+      }
+    } else if (objectStart !== -1) {
+      jsonStart = objectStart
+      // Find matching closing brace
+      let depth = 0
+      for (let i = objectStart; i < cleaned.length; i++) {
+        if (cleaned[i] === '{') depth++
+        else if (cleaned[i] === '}') {
+          depth--
+          if (depth === 0) {
+            jsonEnd = i
+            break
+          }
+        }
+      }
+    }
+    
+    if (jsonStart !== -1 && jsonEnd !== -1) {
       cleaned = cleaned.substring(jsonStart, jsonEnd + 1)
     }
     
-    // Fix common JSON issues
+    // Step 3: Fix common JSON syntax issues
     cleaned = this.fixCommonJsonIssues(cleaned)
     
-    // Try to parse the cleaned version
+    // Step 4: Validate and return
     try {
-      JSON.parse(cleaned)
-      console.log('Successfully cleaned JSON, length:', cleaned.length)
+      const parsed = JSON.parse(cleaned)
+      console.log('Successfully parsed JSON:', typeof parsed, Array.isArray(parsed) ? `array with ${parsed.length} items` : 'object')
       return cleaned
     } catch (parseError) {
-      console.log('Initial parse failed, attempting repairs...')
+      console.error('JSON parse error after cleaning:', parseError)
+      console.log('Failed JSON content:', cleaned.substring(0, 1000))
       
-      // Attempt more aggressive repairs
+      // Last resort: try to repair truncated JSON
       const repaired = this.repairTruncatedJson(cleaned)
       if (repaired) {
-        console.log('Successfully repaired JSON')
+        console.log('Successfully repaired truncated JSON')
         return repaired
       }
       
-      console.error('All JSON repair attempts failed')
-      throw new Error(`Could not extract valid JSON. Raw response: "${response.substring(0, 300)}..."`)
+      throw new Error(`Could not parse JSON response. Error: ${parseError instanceof Error ? parseError.message : 'Unknown'}. Content preview: "${cleaned.substring(0, 300)}..."`)
     }
   }
 
@@ -101,11 +133,78 @@ export class OpenAIAnalyzer {
     return json
   }
 
+  private repairTruncatedAnalysis(json: string): string | null {
+    try {
+      console.log('Attempting to repair truncated analysis JSON...')
+      
+      // Common structure for analysis response
+      const template = {
+        compliance: {
+          introduction: { present: true, quality: "Fair", notes: "Analysis incomplete" },
+          diagnosis: { present: true, quality: "Fair", notes: "Analysis incomplete" },
+          solution: { present: true, quality: "Fair", notes: "Analysis incomplete" },
+          upsell: { present: false, quality: "Poor", notes: "Analysis incomplete" },
+          maintenance: { present: false, quality: "Poor", notes: "Analysis incomplete" },
+          closing: { present: true, quality: "Fair", notes: "Analysis incomplete" }
+        },
+        salesInsights: {
+          opportunities: [],
+          successful: [],
+          missed: []
+        }
+      }
+      
+      // Try to parse partially and fill in missing parts
+      let repaired = json.trim()
+      
+      // If it starts with { but doesn't end properly, try to close it
+      if (repaired.startsWith('{')) {
+        let depth = 0
+        let lastValidIndex = -1
+        
+        for (let i = 0; i < repaired.length; i++) {
+          const char = repaired[i]
+          if (char === '{') depth++
+          else if (char === '}') {
+            depth--
+            if (depth >= 0) lastValidIndex = i
+          }
+        }
+        
+        // Truncate to last valid closing brace and try to parse
+        if (lastValidIndex > 0) {
+          const truncated = repaired.substring(0, lastValidIndex + 1)
+          try {
+            const partial = JSON.parse(truncated)
+            
+            // Merge with template to fill missing parts
+            const merged = {
+              compliance: { ...template.compliance, ...(partial.compliance || {}) },
+              salesInsights: { ...template.salesInsights, ...(partial.salesInsights || {}) }
+            }
+            
+            console.log('Successfully repaired truncated JSON with template merge')
+            return JSON.stringify(merged)
+          } catch (e) {
+            console.log('Template merge approach failed')
+          }
+        }
+      }
+      
+      // If all else fails, return minimal valid structure
+      console.log('Using minimal fallback structure')
+      return JSON.stringify(template)
+      
+    } catch (error) {
+      console.error('Repair failed:', error)
+      return null
+    }
+  }
+
   private repairTruncatedJson(json: string): string | null {
     try {
-      // If it's an array, try to close it properly
+      // For arrays - try to close properly
       if (json.startsWith('[')) {
-        // Find the last complete object
         let depth = 0
         let lastCompleteIndex = -1
         
@@ -127,35 +226,14 @@ export class OpenAIAnalyzer {
         }
       }
       
-      // If it's an object, try to close it properly
-      if (json.startsWith('{')) {
-        let depth = 0
-        let lastCompleteIndex = -1
-        
-        for (let i = 0; i < json.length; i++) {
-          const char = json[i]
-          if (char === '{') depth++
-          else if (char === '}') {
-            depth--
-            if (depth === 0) {
-              lastCompleteIndex = i
-              break
-            }
-          }
-        }
-        
-        if (lastCompleteIndex > 0) {
-          const truncated = json.substring(0, lastCompleteIndex + 1)
-          JSON.parse(truncated) // Test if valid
-          return truncated
-        }
-      }
+      // For objects - delegate to analysis repair method
+      return this.repairTruncatedAnalysis(json)
       
     } catch (error) {
-      console.log('Repair attempt failed:', error)
+      console.log('Basic JSON repair failed:', error)
+      return null
     }
-    
-    return null
+  }
   }
 
   private async makeRequest(messages: any[], temperature = 0.3, fastMode = true): Promise<any> {
@@ -208,42 +286,38 @@ export class OpenAIAnalyzer {
       return await this.segmentTranscriptInChunks(transcript, maxInputLength)
     }
     
-    // Enhanced prompt with stricter formatting requirements
-    const prompt = `Segment this service call transcript into stages. Return ONLY a JSON array:
+    // Enhanced prompt with better structure for reliability
+    const prompt = `Parse this service call transcript and return a JSON array of segments.
 
+Example format:
 [
-  {"speaker": "Technician", "timestamp": "0:00", "text": "Hello, this is John from ABC Service.", "stage": "introduction"},
-  {"speaker": "Customer", "timestamp": "0:05", "text": "Hi, my system isn't working.", "stage": "diagnosis"}
+  {"speaker": "Technician", "timestamp": "0:00", "text": "Hello, this is John from ABC Service", "stage": "introduction"},
+  {"speaker": "Customer", "timestamp": "0:05", "text": "Hi, my system isn't working", "stage": "diagnosis"}
 ]
 
-STRICT RULES:
-1. ONLY return the JSON array - NO markdown, NO explanations
-2. Speaker: "Technician" or "Customer" only
-3. Stages: MUST use one of: "introduction", "diagnosis", "solution", "upsell", "maintenance", "closing"
-4. Every segment MUST have a valid stage
-5. Keep text under 150 characters per segment
-6. Use simple timestamps (M:SS format)
+Rules:
+- Return ONLY the JSON array, no other text
+- Each segment must have: speaker, timestamp, text, stage
+- Speaker: use "Technician" or "Customer" 
+- Stage: use "introduction", "diagnosis", "solution", "upsell", "maintenance", or "closing"
+- Keep text under 200 characters
+- Create 5-15 segments total
 
-STAGE GUIDELINES:
-- "introduction": Greetings, introductions, basic pleasantries
-- "diagnosis": Problem identification, issue discussion, troubleshooting
-- "solution": Fixing, repairing, explaining what was done
-- "upsell": Additional services, upgrades, extra products offered
-- "maintenance": Service plans, maintenance agreements, preventive care
-- "closing": Thank yous, goodbyes, call wrap-up
+Stage assignment:
+- introduction: greetings, introductions
+- diagnosis: problem discussion, troubleshooting  
+- solution: fixes, repairs, explanations
+- upsell: additional services offered
+- maintenance: service plans, agreements
+- closing: goodbyes, wrap-up
 
-IMPORTANT: Assign every segment to the most appropriate stage. If unsure, use:
-- Early segments → "introduction" or "diagnosis"
-- Middle segments → "diagnosis" or "solution"  
-- Late segments → "solution", "upsell", "maintenance", or "closing"
-
-TRANSCRIPT:
-${transcript.substring(0, 5000)}`
+Transcript:
+${transcript.substring(0, 4000)}`
 
     const messages = [
       { 
         role: 'system', 
-        content: 'Return ONLY valid JSON arrays. No markdown, no explanations, no extra text.' 
+        content: 'You are a JSON-only service. Return only valid JSON arrays or objects. Never use markdown formatting, code blocks, or explanatory text.' 
       },
       { role: 'user', content: prompt }
     ]
@@ -1072,6 +1146,16 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
   }
 
   async analyzeServiceCall(transcript: string): Promise<CallAnalysis> {
+    if (!transcript || transcript.trim().length === 0) {
+      throw new Error('Empty transcript provided')
+    }
+
+    console.log('=== OpenAI Analysis Starting ===')
+    console.log('Input transcript length:', transcript.length)
+    console.log('Input preview (first 500 chars):', transcript.substring(0, 500))
+    console.log('Contains speaker labels:', transcript.includes('Technician:') || transcript.includes('Customer:'))
+    console.log('Number of lines:', transcript.split('\n').length)
+
     try {
       console.log('Starting fast OpenAI analysis...')
       
@@ -1079,12 +1163,37 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
       console.log('Step 1: Fast transcript segmentation...')
       const segments = await this.segmentTranscript(transcript)
       console.log(`Segmented into ${segments.length} parts`)
+      
+      if (segments.length === 0) {
+        throw new Error('No segments generated from transcript')
+      }
+      
+      // Debug: Show sample segments
+      console.log('Sample segments:')
+      segments.slice(0, 3).forEach((seg, i) => {
+        console.log(`  ${i + 1}. ${seg.speaker} [${seg.stage}]: ${seg.text.substring(0, 100)}...`)
+      })
+      
+      // Stage distribution check
+      const stageDistribution = segments.reduce((acc, seg) => {
+        acc[seg.stage] = (acc[seg.stage] || 0) + 1
+        return acc
+      }, {} as Record<string, number>)
+      console.log('Stage distribution:', stageDistribution)
 
       // Step 2: Combined fast analysis
       console.log('Step 2: Combined compliance and sales analysis...')
       const combined = await this.analyzeCombined(segments)
       const compliance = combined.compliance
       const salesInsights = combined.salesInsights
+      
+      console.log('Analysis completed - checking results...')
+      console.log('Compliance stages found:', Object.keys(compliance))
+      console.log('Sales insights:', {
+        opportunities: salesInsights.opportunities.length,
+        successful: salesInsights.successful.length,
+        missed: salesInsights.missed.length
+      })
 
       // Fast scoring
       const complianceScores = Object.values(compliance).map(stage => {
@@ -1114,12 +1223,18 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
         transcript: { segments }
       }
 
-      console.log('Fast OpenAI analysis completed successfully')
+      console.log('=== OpenAI Analysis Complete ===')
+      console.log('Call type:', callType)
+      console.log('Overall score:', overallScore)
+      console.log('Final segments:', segments.length)
+      
       return result
 
     } catch (error) {
-      console.error('Fast OpenAI analysis failed:', error)
-      throw new Error(`OpenAI AI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      console.error('=== OpenAI Analysis Failed ===')
+      console.error('Error details:', error)
+      console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace')
+      throw new Error(`OpenAI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 }

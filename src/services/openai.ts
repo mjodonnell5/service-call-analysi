@@ -64,6 +64,14 @@ export class OpenAIAnalyzer {
       throw new Error('No JSON found in response')
     }
     
+    // Try to parse the entire cleaned response first
+    try {
+      JSON.parse(cleaned)
+      return cleaned
+    } catch {
+      // If that fails, try to extract JSON boundaries
+    }
+    
     // Determine if it's an object or array and find the appropriate boundaries
     let startIndex = -1
     let startChar = ''
@@ -79,27 +87,62 @@ export class OpenAIAnalyzer {
       endChar = ']'
     }
     
-    // Find the matching closing bracket/brace
+    // Find the matching closing bracket/brace with proper handling of nested structures
     let bracketCount = 0
     let endIndex = -1
+    let inString = false
+    let escapeNext = false
     
     for (let i = startIndex; i < cleaned.length; i++) {
-      if (cleaned[i] === startChar) {
-        bracketCount++
-      } else if (cleaned[i] === endChar) {
-        bracketCount--
-        if (bracketCount === 0) {
-          endIndex = i
-          break
+      const char = cleaned[i]
+      
+      if (escapeNext) {
+        escapeNext = false
+        continue
+      }
+      
+      if (char === '\\' && inString) {
+        escapeNext = true
+        continue
+      }
+      
+      if (char === '"' && !escapeNext) {
+        inString = !inString
+        continue
+      }
+      
+      if (!inString) {
+        if (char === startChar) {
+          bracketCount++
+        } else if (char === endChar) {
+          bracketCount--
+          if (bracketCount === 0) {
+            endIndex = i
+            break
+          }
         }
       }
     }
     
     if (endIndex === -1) {
-      throw new Error('Malformed JSON: could not find closing bracket')
+      // Try to find the last occurrence of the end character as a fallback
+      const lastEndChar = cleaned.lastIndexOf(endChar)
+      if (lastEndChar > startIndex) {
+        endIndex = lastEndChar
+      } else {
+        throw new Error('Malformed JSON: could not find closing bracket')
+      }
     }
     
-    return cleaned.substring(startIndex, endIndex + 1)
+    const extracted = cleaned.substring(startIndex, endIndex + 1)
+    
+    // Validate the extracted JSON
+    try {
+      JSON.parse(extracted)
+      return extracted
+    } catch {
+      throw new Error('Extracted text is not valid JSON')
+    }
   }
 
   private async makeRequest(messages: any[], temperature = 0.3): Promise<any> {
@@ -158,12 +201,12 @@ Stages definition:
 Here's the transcript:
 ${transcript}
 
-IMPORTANT: Return ONLY the JSON array, no markdown formatting, no explanation text, no code blocks.`
+IMPORTANT: Return ONLY a valid JSON array, no markdown formatting, no explanation text, no code blocks. Start with [ and end with ].`
 
     const messages = [
       {
         role: 'system',
-        content: 'You are an expert at analyzing service call transcripts. Always return valid JSON arrays as requested, with no markdown formatting or additional text.'
+        content: 'You are an expert at analyzing service call transcripts. Always return valid JSON arrays as requested, with no markdown formatting or additional text. Your response must be parseable JSON.'
       },
       {
         role: 'user',
@@ -171,20 +214,50 @@ IMPORTANT: Return ONLY the JSON array, no markdown formatting, no explanation te
       }
     ]
 
-    const response = await this.makeRequest(messages)
+    // Try up to 3 times in case of JSON parsing issues
+    let lastError: Error | null = null
     
-    try {
-      const cleanedResponse = this.cleanJsonResponse(response)
-      const segments = JSON.parse(cleanedResponse)
-      if (!Array.isArray(segments)) {
-        throw new Error('Response is not an array')
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await this.makeRequest(messages, 0.1) // Lower temperature for more consistent output
+        const cleanedResponse = this.cleanJsonResponse(response)
+        const segments = JSON.parse(cleanedResponse)
+        
+        if (!Array.isArray(segments)) {
+          throw new Error('Response is not an array')
+        }
+        
+        // Validate that segments have required fields
+        for (const segment of segments) {
+          if (!segment.speaker || !segment.text || !segment.stage) {
+            throw new Error('Segment missing required fields')
+          }
+        }
+        
+        return segments
+        
+      } catch (parseError) {
+        lastError = parseError instanceof Error ? parseError : new Error(String(parseError))
+        console.error(`Attempt ${attempt}/3 failed to parse OpenAI segmentation response:`, parseError)
+        
+        if (attempt === 3) {
+          // Try to provide more helpful error messages based on the response content
+          let errorMessage = 'Invalid JSON'
+          if (lastError) {
+            errorMessage = lastError.message
+            errorMessage += `. Failed after 3 attempts. This may be due to incomplete AI response or network issues.`
+          }
+          
+          throw new Error(`Failed to parse OpenAI segmentation response: ${errorMessage}`)
+        }
+        
+        // Add a small delay before retry
+        await new Promise(resolve => setTimeout(resolve, 1000))
       }
-      return segments
-    } catch (parseError) {
-      console.error('Failed to parse OpenAI segmentation response:', parseError)
-      console.error('Raw response:', response)
-      throw new Error(`Failed to parse OpenAI segmentation response: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
     }
+    
+    // This should never be reached due to the throw in the loop, but TypeScript needs it
+    throw new Error('Failed to parse segmentation after 3 attempts')
   }
 
   async analyzeCompliance(segments: any[]): Promise<CallAnalysis['compliance']> {
@@ -215,7 +288,7 @@ Return a JSON object with this exact structure:
   "closing": {"present": boolean, "quality": string, "notes": string}
 }
 
-IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation text, no code blocks.`
+IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation text, no code blocks. Start with { and end with }.`
 
     const messages = [
       {
@@ -228,14 +301,15 @@ IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation t
       }
     ]
 
-    const response = await this.makeRequest(messages)
+    const response = await this.makeRequest(messages, 0.1) // Lower temperature for consistent output
     
     try {
       const cleanedResponse = this.cleanJsonResponse(response)
       return JSON.parse(cleanedResponse)
     } catch (parseError) {
       console.error('Failed to parse OpenAI compliance response:', parseError)
-      console.error('Raw response:', response)
+      console.error('Raw response length:', response?.length || 0)
+      console.error('Raw response preview:', response?.substring(0, 500) || 'No response')
       throw new Error(`Failed to parse OpenAI compliance response: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
     }
   }
@@ -257,7 +331,7 @@ Return a JSON object:
   "missed": ["string array of missed opportunities"]
 }
 
-IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation text, no code blocks.`
+IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation text, no code blocks. Start with { and end with }.`
 
     const messages = [
       {
@@ -270,14 +344,15 @@ IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation t
       }
     ]
 
-    const response = await this.makeRequest(messages)
+    const response = await this.makeRequest(messages, 0.1) // Lower temperature for consistent output
     
     try {
       const cleanedResponse = this.cleanJsonResponse(response)
       return JSON.parse(cleanedResponse)
     } catch (parseError) {
       console.error('Failed to parse OpenAI sales response:', parseError)
-      console.error('Raw response:', response)
+      console.error('Raw response length:', response?.length || 0)
+      console.error('Raw response preview:', response?.substring(0, 500) || 'No response')
       throw new Error(`Failed to parse OpenAI sales response: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
     }
   }
@@ -288,16 +363,81 @@ IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation t
       
       // Step 1: Segment the transcript
       console.log('Step 1: Segmenting transcript...')
-      const segments = await this.segmentTranscript(transcript)
-      console.log(`Segmented into ${segments.length} parts`)
+      let segments
+      
+      try {
+        segments = await this.segmentTranscript(transcript)
+        console.log(`Segmented into ${segments.length} parts`)
+      } catch (segmentError) {
+        console.error('Failed to segment transcript, creating fallback segments:', segmentError)
+        
+        // Create basic segments from transcript as fallback
+        const lines = transcript.split('\n').filter(line => line.trim())
+        segments = lines.map((line, index) => {
+          const timeMinutes = Math.floor(index * 0.5) // Estimate 30 seconds per exchange
+          const timeSeconds = (index * 30) % 60
+          const timestamp = `${timeMinutes.toString().padStart(2, '0')}:${timeSeconds.toString().padStart(2, '0')}`
+          
+          // Simple speaker detection
+          const speaker = line.toLowerCase().includes('technician') || line.toLowerCase().includes('mike') || line.toLowerCase().includes('tech') 
+            ? 'Technician' 
+            : 'Customer'
+          
+          // Simple stage detection based on content
+          let stage = 'diagnosis' // default
+          if (index < 2) stage = 'introduction'
+          else if (line.toLowerCase().includes('fix') || line.toLowerCase().includes('repair')) stage = 'solution'
+          else if (line.toLowerCase().includes('upsell') || line.toLowerCase().includes('additional')) stage = 'upsell'
+          else if (line.toLowerCase().includes('maintenance') || line.toLowerCase().includes('plan')) stage = 'maintenance'
+          else if (index > lines.length - 3) stage = 'closing'
+          
+          return {
+            speaker,
+            timestamp,
+            text: line.trim(),
+            stage
+          }
+        })
+        
+        console.log(`Created ${segments.length} fallback segments`)
+      }
 
       // Step 2: Analyze compliance
       console.log('Step 2: Analyzing compliance...')
-      const compliance = await this.analyzeCompliance(segments)
+      let compliance
+      
+      try {
+        compliance = await this.analyzeCompliance(segments)
+      } catch (complianceError) {
+        console.error('Failed to analyze compliance, using fallback:', complianceError)
+        
+        // Fallback compliance analysis
+        compliance = {
+          introduction: { present: segments.some(s => s.stage === 'introduction'), quality: 'Fair', notes: 'Basic analysis - detailed analysis failed' },
+          diagnosis: { present: segments.some(s => s.stage === 'diagnosis'), quality: 'Fair', notes: 'Basic analysis - detailed analysis failed' },
+          solution: { present: segments.some(s => s.stage === 'solution'), quality: 'Fair', notes: 'Basic analysis - detailed analysis failed' },
+          upsell: { present: segments.some(s => s.stage === 'upsell'), quality: 'Fair', notes: 'Basic analysis - detailed analysis failed' },
+          maintenance: { present: segments.some(s => s.stage === 'maintenance'), quality: 'Fair', notes: 'Basic analysis - detailed analysis failed' },
+          closing: { present: segments.some(s => s.stage === 'closing'), quality: 'Fair', notes: 'Basic analysis - detailed analysis failed' }
+        }
+      }
 
       // Step 3: Analyze sales insights
       console.log('Step 3: Analyzing sales insights...')
-      const salesInsights = await this.analyzeSalesInsights(segments)
+      let salesInsights
+      
+      try {
+        salesInsights = await this.analyzeSalesInsights(segments)
+      } catch (salesError) {
+        console.error('Failed to analyze sales insights, using fallback:', salesError)
+        
+        // Fallback sales analysis
+        salesInsights = {
+          opportunities: ['Unable to analyze - parsing error occurred'],
+          successful: ['Unable to analyze - parsing error occurred'],
+          missed: ['Unable to analyze - parsing error occurred']
+        }
+      }
 
       // Calculate overall score
       const complianceScores = Object.values(compliance).map(stage => {

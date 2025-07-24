@@ -133,9 +133,10 @@ function App() {
           debugDetails += '\n4. Consider using Spark AI instead (switch AI provider)'
         } else if (err.message.includes('JSON') || err.message.includes('parse')) {
           debugDetails += '\n\nSUGGESTION: This appears to be a JSON parsing error from the AI service.'
-          debugDetails += '\n1. Try using Spark AI instead (switch AI provider)'
-          debugDetails += '\n2. The AI response may have been malformed'
+          debugDetails += '\n1. Try using Spark AI instead (switch AI provider above)'
+          debugDetails += '\n2. The AI response may have been malformed or incomplete'
           debugDetails += '\n3. Try again as this could be a temporary issue'
+          debugDetails += '\n4. If using OpenAI, check that your account has sufficient credits'
         } else if (err.message.includes('Network error')) {
           debugDetails += '\n\nSUGGESTION: Network connection issue.'
           debugDetails += '\n1. Check your internet connection'

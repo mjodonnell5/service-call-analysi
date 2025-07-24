@@ -34,7 +34,7 @@ export class GeminiAnalyzer {
 
   constructor(config: GeminiConfig) {
     this.config = {
-      model: 'gemini-1.5-flash-latest',
+      model: 'gemini-1.5-flash',
       ...config
     }
   }
@@ -52,8 +52,8 @@ export class GeminiAnalyzer {
     
     const url = `${this.baseUrl}/${this.config.model}:generateContent?key=${this.config.apiKey}`
     
-    // Check prompt length and truncate if necessary (more conservative limit)
-    const maxPromptLength = 15000 // Reduced for better reliability
+    // Check prompt length and truncate if necessary (conservative limit for free tier)
+    const maxPromptLength = 8000 // Reduced for free tier reliability
     let truncatedPrompt = prompt
     if (prompt.length > maxPromptLength) {
       console.log(`Prompt too long (${prompt.length} chars), truncating to ${maxPromptLength}`)
@@ -80,7 +80,7 @@ export class GeminiAnalyzer {
             temperature: 0.1,
             topK: 1,
             topP: 0.95,
-            maxOutputTokens: 2000, // Increased for complete responses
+            maxOutputTokens: 1500, // Reduced for free tier
           },
           safetySettings: [
             {
@@ -169,9 +169,9 @@ export class GeminiAnalyzer {
       throw new Error('No content returned from Gemini API')
     }
     
-    const responseText = candidate.content.parts[0].text || ''
-    if (!responseText.trim()) {
-      throw new Error('Empty response from Gemini API')
+    const responseText = candidate.content.parts[0].text
+    if (!responseText || responseText.trim().length === 0) {
+      throw new Error('Empty text response from Gemini API')
     }
     
     console.log(`Gemini response length: ${responseText.length} chars`)
@@ -184,47 +184,48 @@ export class GeminiAnalyzer {
     try {
       console.log('Starting single-step Gemini analysis...')
       
-      // Single comprehensive analysis prompt
+      // Simplified analysis prompt optimized for free tier
       const analysisPrompt = `
-You are an expert service call analyzer. Analyze this transcript and return ONLY valid JSON.
+Analyze this service call transcript and return ONLY valid JSON (no markdown).
 
 TRANSCRIPT:
-${transcript}
+${transcript.substring(0, 4000)} // Truncate for free tier
 
-Return this EXACT JSON structure with NO markdown formatting:
+Return this exact JSON structure:
 {
-  "callType": "HVAC Repair Service Call",
-  "overallScore": 85,
+  "callType": "Service Call",
+  "overallScore": 80,
   "segments": [
-    {"speaker": "Technician", "text": "Good morning! This is Mike from AirFlow Solutions.", "timestamp": "00:15", "stage": "introduction"},
-    {"speaker": "Customer", "text": "Yes, that's me. Thank you for coming out so quickly.", "timestamp": "00:30", "stage": "introduction"}
+    {"speaker": "Technician", "text": "Hello", "timestamp": "00:15", "stage": "introduction"}
   ],
   "stages": [
-    {"stage": "introduction", "quality": "Good", "notes": "Professional greeting and company introduction"},
-    {"stage": "diagnosis", "quality": "Excellent", "notes": "Thorough problem investigation with good questioning"},
-    {"stage": "solution", "quality": "Good", "notes": "Clear repair explanation with upfront pricing"},
-    {"stage": "upsell", "quality": "Good", "notes": "Relevant additional services offered"},
-    {"stage": "maintenance", "quality": "Excellent", "notes": "Maintenance plan clearly explained with benefits"},
-    {"stage": "closing", "quality": "Good", "notes": "Professional wrap-up with follow-up contact info"}
+    {"stage": "introduction", "quality": "Good", "notes": "Professional greeting"},
+    {"stage": "diagnosis", "quality": "Good", "notes": "Problem investigation"},
+    {"stage": "solution", "quality": "Good", "notes": "Solution provided"},
+    {"stage": "upsell", "quality": "Fair", "notes": "Some additional services"},
+    {"stage": "maintenance", "quality": "Good", "notes": "Maintenance discussed"},
+    {"stage": "closing", "quality": "Good", "notes": "Professional closing"}
   ],
   "salesInsights": {
-    "opportunities": ["Customer mentioned allergies - good opportunity for air purification", "High energy bills indicate efficiency upgrade potential"],
-    "successful": ["Successfully offered maintenance plan with clear benefits", "Provided competitive repair pricing"],
-    "missed": ["Could have emphasized long-term savings more", "Didn't ask about other HVAC units"]
+    "opportunities": ["Potential for additional services"],
+    "successful": ["Service completed professionally"],
+    "missed": ["Manual review recommended"]
   }
 }
 
-REQUIREMENTS:
-- Parse EVERY speaker statement into segments
+Requirements:
+- Parse speaker statements into segments
 - Assign stages: introduction, diagnosis, solution, upsell, maintenance, closing
-- Quality options: Poor, Fair, Good, Excellent
-- Include ALL 6 stages even if some are missing from call
-- Use sequential timestamps (00:15, 00:30, 00:45, etc.)
-- Overall score 0-100 based on compliance and sales performance
+- Quality: Poor, Fair, Good, Excellent
+- Overall score 0-100
 `
 
       const response = await this.callGemini(analysisPrompt)
       console.log('Gemini response received, parsing...')
+      
+      if (!response || response.trim().length === 0) {
+        throw new Error('Empty response from Gemini API')
+      }
       
       // Simple, robust JSON parsing
       let result
@@ -242,8 +243,8 @@ REQUIREMENTS:
         
       } catch (parseError) {
         console.error('JSON parsing failed:', parseError)
-        console.error('Response that failed:', response.substring(0, 2000))
-        throw new Error(`Failed to parse Gemini response: ${parseError}`)
+        console.error('Response that failed:', response.substring(0, 1000))
+        throw new Error(`Failed to parse Gemini segmentation response: ${parseError}`)
       }
       
       // Validate and fix the result structure
@@ -319,7 +320,7 @@ REQUIREMENTS:
     // Validate segments
     if (Array.isArray(result.segments) && result.segments.length > 0) {
       validated.segmentedTranscript = result.segments
-        .filter((s: any) => s.speaker && s.text)
+        .filter((s: any) => s.speaker && s.text && s.text.trim().length > 0)
         .map((s: any, index: number) => ({
           speaker: s.speaker,
           text: s.text,
@@ -330,6 +331,17 @@ REQUIREMENTS:
       // Fallback to parsing transcript
       console.log('No valid segments from Gemini, parsing transcript manually...')
       validated.segmentedTranscript = this.parseTranscriptToSegments(transcript)
+    }
+    
+    // Ensure we have some segments
+    if (validated.segmentedTranscript.length === 0) {
+      console.log('Still no segments, creating basic fallback...')
+      validated.segmentedTranscript = [{
+        speaker: 'System',
+        text: 'Transcript analysis failed - manual review required',
+        timestamp: '00:00',
+        stage: 'introduction'
+      }]
     }
     
     console.log('Validation complete')

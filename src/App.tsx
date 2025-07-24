@@ -117,8 +117,9 @@ function App() {
         } else if (err.message.includes('quota') || err.message.includes('billing')) {
           debugDetails += '\n\nSUGGESTION: Your Gemini API quota may be exceeded. Please:'
           debugDetails += '\n1. Check your usage at https://aistudio.google.com/'
-          debugDetails += '\n2. Verify your billing settings'
+          debugDetails += '\n2. Verify your billing settings (free tier has limits)'
           debugDetails += '\n3. Try again later if you hit rate limits'
+          debugDetails += '\n4. Consider using Spark AI instead (uncheck Gemini option)'
         } else if (err.message.includes('JSON')) {
           debugDetails += '\n\nSUGGESTION: This appears to be a JSON parsing error from Gemini.'
           debugDetails += '\n1. Try using Spark AI instead (uncheck Gemini AI option)'
@@ -174,7 +175,7 @@ function App() {
             <p className="text-muted-foreground">Upload a service call recording to analyze technician performance and sales opportunities</p>
             <div className="mt-4 flex justify-center">
               <Badge variant="default" className="bg-green-600">
-                {useGeminiAnalysis && geminiApiKey ? 'Gemini AI Analysis Active' : 'Production Mode - AssemblyAI Transcription Active'}
+                {useGeminiAnalysis && geminiApiKey ? 'Gemini AI Enhanced Analysis' : 'AssemblyAI + Spark AI Analysis'}
               </Badge>
             </div>
           </div>
@@ -264,15 +265,15 @@ function App() {
                                 </label>
                               </div>
                               
-                              {useGeminiAnalysis && (
+                               {useGeminiAnalysis && (
                                 <div>
-                                  <label className="text-xs text-muted-foreground">Gemini API Key:</label>
+                                  <label className="text-xs text-muted-foreground">Gemini API Key (Free Tier):</label>
                                   <div className="flex gap-2 mt-1">
                                     <input
                                       type="password"
                                       value={geminiApiKey || ''}
                                       onChange={(e) => setGeminiApiKey(e.target.value)}
-                                      placeholder="Enter Gemini API key"
+                                      placeholder="Enter Gemini API key (AIzaSy...)"
                                       className="flex-1 px-2 py-1 text-xs border rounded"
                                     />
                                     <Button
@@ -291,14 +292,15 @@ function App() {
                                           setCurrentStep('Testing Gemini API connection...')
                                           console.log('Testing Gemini API key...')
                                           
-                                          const { createGeminiAnalyzer } = await import('@/services/gemini')
-                                          const analyzer = createGeminiAnalyzer(geminiApiKey)
+                                          const { testGeminiAPI } = await import('@/services/gemini-test')
+                                          const testResult = await testGeminiAPI(geminiApiKey)
                                           
-                                          // Test with a very simple prompt
-                                          await analyzer.analyzeServiceCall('Technician: Hello, this is a test. Customer: Thank you.')
-                                          
-                                          setCurrentStep('✅ Gemini API key is valid!')
-                                          setTimeout(() => setCurrentStep(''), 3000)
+                                          if (testResult.success) {
+                                            setCurrentStep('✅ Gemini API key is valid!')
+                                            setTimeout(() => setCurrentStep(''), 3000)
+                                          } else {
+                                            throw new Error(testResult.error || 'API test failed')
+                                          }
                                           
                                         } catch (err) {
                                           console.error('Gemini API test failed:', err)
@@ -310,6 +312,8 @@ function App() {
                                             setDebugInfo('Please check that your API key is correct and has the format: AIzaSy...')
                                           } else if (err instanceof Error && err.message.includes('quota')) {
                                             setDebugInfo('Your Gemini API quota may be exceeded. Check your Google AI Studio billing and usage.')
+                                          } else if (err instanceof Error && err.message.includes('403')) {
+                                            setDebugInfo('API key may not have proper permissions. Ensure you\'re using a Google AI Studio API key, not a Google Cloud API key.')
                                           }
                                         }
                                       }}
@@ -319,6 +323,12 @@ function App() {
                                       Test
                                     </Button>
                                   </div>
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    Free tier has quota limits. Get your key from{' '}
+                                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" className="text-primary underline">
+                                      Google AI Studio
+                                    </a>
+                                  </p>
                                 </div>
                               )}
                               

@@ -281,6 +281,8 @@ export class OpenAIAnalyzer {
    */
   private async parseMarkdownTranscript(markdown: string): Promise<any[]> {
     console.log('Parsing markdown transcript into segments...')
+    console.log('Markdown input length:', markdown.length)
+    console.log('Markdown preview:', markdown.substring(0, 500))
     
     const lines = markdown.split('\n')
     const segments: any[] = []
@@ -292,8 +294,8 @@ export class OpenAIAnalyzer {
     for (const line of lines) {
       const trimmed = line.trim()
       
-      // Skip empty lines and markdown formatting
-      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('**') || trimmed === '---') {
+      // Skip empty lines and certain markdown formatting
+      if (!trimmed || trimmed.startsWith('#') || trimmed === '---') {
         continue
       }
       
@@ -315,6 +317,7 @@ export class OpenAIAnalyzer {
         currentSpeaker = exchangeMatch[1]
         currentText = ''
         currentTimestamp = ''
+        console.log(`Found exchange header: ${exchangeMatch[1]}`)
         continue
       }
       
@@ -322,6 +325,12 @@ export class OpenAIAnalyzer {
       const timeMatch = trimmed.match(/^\*\*Time:\*\* (.+)/)
       if (timeMatch) {
         currentTimestamp = timeMatch[1]
+        console.log(`Found timestamp: ${timeMatch[1]}`)
+        continue
+      }
+      
+      // Skip other markdown metadata lines
+      if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
         continue
       }
       
@@ -343,12 +352,20 @@ export class OpenAIAnalyzer {
     }
     
     console.log(`Parsed ${segments.length} segments from markdown`)
-    console.log('Sample parsed segments:', segments.slice(0, 2).map(s => ({
-      speaker: s.speaker,
-      timestamp: s.timestamp,
-      stage: s.stage,
-      text_preview: s.text.substring(0, 100) + '...'
-    })))
+    if (segments.length === 0) {
+      console.error('No segments parsed! Debugging markdown structure...')
+      console.log('Lines containing "Exchange":', lines.filter(l => l.includes('Exchange')))
+      console.log('Lines containing "Technician":', lines.filter(l => l.includes('Technician')))
+      console.log('Lines containing "Customer":', lines.filter(l => l.includes('Customer')))
+      console.log('First 20 lines:', lines.slice(0, 20))
+    } else {
+      console.log('Sample parsed segments:', segments.slice(0, 2).map(s => ({
+        speaker: s.speaker,
+        timestamp: s.timestamp,
+        stage: s.stage,
+        text_preview: s.text.substring(0, 100) + '...'
+      })))
+    }
     
     return segments
   }
@@ -1505,8 +1522,26 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
       
       // Step 1: Parse markdown into segments  
       console.log('Step 1: Parsing markdown transcript...')
-      const segments = await this.parseMarkdownTranscript(markdownTranscript)
+      let segments = await this.parseMarkdownTranscript(markdownTranscript)
       console.log(`Parsed into ${segments.length} segments`)
+      
+      // If markdown parsing failed, try direct transcript segmentation
+      if (segments.length === 0) {
+        console.log('Markdown parsing failed, attempting direct transcript segmentation...')
+        
+        // Extract raw transcript from markdown
+        const rawTranscript = markdownTranscript
+          .replace(/^#.*$/gm, '') // Remove headers
+          .replace(/^\*\*.*\*\*$/gm, '') // Remove bold text
+          .replace(/^---$/gm, '') // Remove dividers
+          .replace(/\n{3,}/g, '\n\n') // Normalize spacing
+          .trim()
+        
+        console.log('Extracted raw transcript:', rawTranscript.substring(0, 300))
+        
+        segments = await this.segmentTranscript(rawTranscript)
+        console.log(`Direct segmentation produced ${segments.length} segments`)
+      }
       
       if (segments.length === 0) {
         throw new Error('No segments generated from markdown transcript')

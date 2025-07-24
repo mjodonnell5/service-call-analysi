@@ -61,49 +61,183 @@ export class TranscriptProcessor {
    * Parse transcript text into structured exchanges
    */
   private static parseTranscriptExchanges(transcript: string): TranscriptExchange[] {
+    console.log('Parsing transcript exchanges...')
+    console.log('Input length:', transcript.length)
+    console.log('Input preview:', transcript.substring(0, 500))
+    
     const exchanges: TranscriptExchange[] = []
     
-    // Split by double newlines (AssemblyAI format)
-    const segments = transcript.split('\n\n').filter(segment => segment.trim().length > 0)
+    // Strategy 1: Try multiple parsing approaches for different AssemblyAI formats
+    let segments: string[] = []
+    
+    // First try: Split by double newlines (standard format)
+    segments = transcript.split('\n\n').filter(segment => segment.trim().length > 0)
+    console.log('Double newline split found:', segments.length, 'segments')
+    
+    // If not many segments, try single newlines
+    if (segments.length < 3) {
+      segments = transcript.split('\n').filter(segment => segment.trim().length > 10)
+      console.log('Single newline split found:', segments.length, 'segments')
+    }
+    
+    // If still not many, try speaker diarization patterns
+    if (segments.length < 3) {
+      const speakerPattern = /Speaker [A-Z]:/gi
+      if (speakerPattern.test(transcript)) {
+        segments = transcript.split(speakerPattern).filter(s => s.trim().length > 5)
+        // Add speaker labels back
+        const speakers = transcript.match(/Speaker [A-Z]:/gi) || []
+        segments = segments.slice(1).map((text, i) => `${speakers[i] || 'Speaker A:'} ${text}`)
+        console.log('Speaker pattern split found:', segments.length, 'segments')
+      }
+    }
+    
+    console.log('Processing', segments.length, 'segments')
     
     segments.forEach((segment, index) => {
       const trimmed = segment.trim()
       if (!trimmed) return
       
-      // Parse format: "Speaker [timestamp]: text" or "Speaker: text"
-      const match = trimmed.match(/^(Technician|Customer|Speaker [A-Z])\s*(?:\[([^\]]+)\])?\s*:\s*(.+)$/s)
+      let speaker = 'Unknown'
+      let text = trimmed
+      let timestamp: string | undefined
       
-      if (match) {
-        const [, speaker, timestamp, text] = match
+      // Strategy 1: Parse standard format "Speaker [timestamp]: text" or "Speaker: text"
+      const standardMatch = trimmed.match(/^(Technician|Customer|Tech|Agent|Service|Rep|Speaker [A-Z])\s*(?:\[([^\]]+)\])?\s*:\s*(.+)$/s)
+      
+      if (standardMatch) {
+        const [, rawSpeaker, rawTimestamp, rawText] = standardMatch
+        speaker = this.normalizeSpeaker(rawSpeaker.trim())
+        text = rawText.trim()
+        timestamp = rawTimestamp?.trim()
+      } else {
+        // Strategy 2: Look for colon-separated format
+        const colonIndex = trimmed.indexOf(':')
+        if (colonIndex > 0 && colonIndex < 50) { // Speaker names shouldn't be too long
+          const potentialSpeaker = trimmed.substring(0, colonIndex).trim()
+          const potentialText = trimmed.substring(colonIndex + 1).trim()
+          
+          // Check if it looks like a speaker name
+          if (potentialSpeaker.length < 50 && potentialText.length > 10) {
+            speaker = this.normalizeSpeaker(potentialSpeaker)
+            text = potentialText
+          }
+        } else {
+          // Strategy 3: Infer speaker from content if no clear format
+          speaker = this.inferSpeakerFromContent(trimmed, index)
+          text = trimmed
+        }
+      }
+      
+      if (text.length > 5) { // Only include meaningful exchanges
         exchanges.push({
-          speaker: speaker.trim(),
-          text: text.trim(),
-          timestamp: timestamp?.trim(),
+          speaker,
+          text,
+          timestamp,
           originalIndex: index
         })
-      } else {
-        // Fallback parsing for malformed lines
-        const colonIndex = trimmed.indexOf(':')
-        if (colonIndex > 0) {
-          const speaker = trimmed.substring(0, colonIndex).trim()
-          const text = trimmed.substring(colonIndex + 1).trim()
-          
-          exchanges.push({
-            speaker: speaker || 'Unknown',
-            text,
-            originalIndex: index
-          })
-        }
       }
     })
     
-    console.log('Parsed exchanges sample:', exchanges.slice(0, 3).map(e => ({
+    // Post-process to ensure we have reasonable speaker distribution
+    this.balanceSpeakerDistribution(exchanges)
+    
+    console.log('Final parsed exchanges:', exchanges.length)
+    console.log('Speaker distribution:', exchanges.reduce((acc, e) => {
+      acc[e.speaker] = (acc[e.speaker] || 0) + 1
+      return acc
+    }, {} as Record<string, number>))
+    
+    console.log('Sample exchanges:', exchanges.slice(0, 3).map(e => ({
       speaker: e.speaker,
       text: e.text.substring(0, 100) + '...',
       timestamp: e.timestamp
     })))
     
     return exchanges
+  }
+  
+  /**
+   * Normalize speaker names to standard format
+   */
+  private static normalizeSpeaker(rawSpeaker: string): string {
+    const lower = rawSpeaker.toLowerCase()
+    
+    // Map various formats to our standard names
+    if (lower.includes('tech') || lower.includes('service') || lower.includes('agent') || 
+        lower.includes('rep') || lower.includes('field') || lower === 'speaker a') {
+      return 'Technician'
+    } else if (lower.includes('customer') || lower.includes('client') || lower.includes('caller') || 
+               lower.includes('home') || lower.includes('user') || lower === 'speaker b') {
+      return 'Customer'
+    }
+    
+    // Default based on common patterns
+    return rawSpeaker.includes('A') || rawSpeaker.includes('1') ? 'Technician' : 'Customer'
+  }
+  
+  /**
+   * Infer speaker from content when no clear speaker label exists
+   */
+  private static inferSpeakerFromContent(text: string, index: number): string {
+    const lowerText = text.toLowerCase()
+    
+    // Strong technician indicators
+    if (lowerText.includes('this is') && lowerText.includes('from') ||
+        lowerText.includes('good morning') || lowerText.includes('good afternoon') ||
+        lowerText.includes('let me') || lowerText.includes('i can') ||
+        lowerText.includes('we offer') || lowerText.includes('system') ||
+        lowerText.includes('repair') || lowerText.includes('diagnose') ||
+        lowerText.includes('install') || lowerText.includes('maintenance') ||
+        lowerText.includes('service plan') || lowerText.includes('recommend')) {
+      return 'Technician'
+    }
+    
+    // Strong customer indicators
+    if (lowerText.includes('my') && (lowerText.includes('problem') || lowerText.includes('issue')) ||
+        lowerText.includes('how much') || lowerText.includes('cost') ||
+        lowerText.includes('thank you') || lowerText.includes('sounds good') ||
+        lowerText.includes('yes please') || lowerText.includes('that works')) {
+      return 'Customer'
+    }
+    
+    // Alternate by index if unclear (common in real conversations)
+    return index % 2 === 0 ? 'Technician' : 'Customer'
+  }
+  
+  /**
+   * Ensure reasonable speaker distribution and fix obvious errors
+   */
+  private static balanceSpeakerDistribution(exchanges: TranscriptExchange[]): void {
+    if (exchanges.length < 2) return
+    
+    const speakerCounts = exchanges.reduce((acc, e) => {
+      acc[e.speaker] = (acc[e.speaker] || 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+    
+    const totalCount = exchanges.length
+    const techCount = speakerCounts['Technician'] || 0
+    const custCount = speakerCounts['Customer'] || 0
+    
+    // If one speaker dominates (>80%), try to rebalance
+    if (techCount > totalCount * 0.8 || custCount > totalCount * 0.8) {
+      console.log('Detected speaker imbalance, attempting to rebalance...')
+      
+      // Simple alternating pattern for better distribution
+      exchanges.forEach((exchange, index) => {
+        if (index === 0) {
+          // First speaker is usually technician (greeting)
+          exchange.speaker = 'Technician'
+        } else {
+          // Alternate speakers
+          const prevSpeaker = exchanges[index - 1].speaker
+          exchange.speaker = prevSpeaker === 'Technician' ? 'Customer' : 'Technician'
+        }
+      })
+      
+      console.log('Rebalanced speaker distribution')
+    }
   }
   
   /**

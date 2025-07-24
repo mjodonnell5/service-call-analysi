@@ -42,6 +42,7 @@ function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [currentStep, setCurrentStep] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [debugInfo, setDebugInfo] = useState<string | null>(null)
   
   const { transcribeAudio, isTranscribing } = useMockTranscription()
 
@@ -50,6 +51,7 @@ function App() {
     if (!file) return
 
     setError(null)
+    setDebugInfo(null)
     setIsAnalyzing(true)
     
     try {
@@ -62,7 +64,10 @@ function App() {
       setAnalysis(analysisResult)
       setCurrentStep('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Analysis failed')
+      console.error('Full error details:', err)
+      const errorMessage = err instanceof Error ? err.message : 'Analysis failed with unknown error'
+      setError(`Analysis Error: ${errorMessage}`)
+      setDebugInfo(err instanceof Error ? err.stack || 'No stack trace available' : 'Unknown error type')
     } finally {
       setIsAnalyzing(false)
     }
@@ -118,7 +123,19 @@ function App() {
                   {error && (
                     <Alert className="border-destructive">
                       <AlertTriangle className="h-4 w-4" />
-                      <AlertDescription>{error}</AlertDescription>
+                      <AlertDescription>
+                        <div className="space-y-2">
+                          <p>{error}</p>
+                          {debugInfo && (
+                            <details className="mt-2">
+                              <summary className="text-xs cursor-pointer">Technical Details</summary>
+                              <pre className="text-xs mt-1 p-2 bg-muted rounded overflow-auto max-h-32">
+                                {debugInfo}
+                              </pre>
+                            </details>
+                          )}
+                        </div>
+                      </AlertDescription>
                     </Alert>
                   )}
                   

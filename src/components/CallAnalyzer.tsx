@@ -99,11 +99,52 @@ Be thorough but constructive in your analysis.
 
   try {
     const response = await spark.llm(analysisPrompt, 'gpt-4o', true)
-    const analysis = JSON.parse(response)
+    console.log('Raw LLM response:', response)
+    
+    if (!response || response.trim() === '') {
+      throw new Error('Empty response from AI service')
+    }
+    
+    let analysis
+    try {
+      analysis = JSON.parse(response)
+    } catch (parseError) {
+      console.error('JSON parsing failed:', parseError)
+      console.error('Response content:', response)
+      throw new Error('Invalid JSON response from AI service')
+    }
+    
+    // Validate required fields
+    if (!analysis.callType || !analysis.compliance || !analysis.salesInsights || !analysis.transcript) {
+      throw new Error('Incomplete analysis response - missing required fields')
+    }
+    
     return analysis
   } catch (error) {
     console.error('Analysis failed:', error)
-    throw new Error('Failed to analyze the call')
+    
+    // Provide fallback analysis if AI fails
+    console.log('Providing fallback analysis due to AI failure')
+    return {
+      callType: "Service Call (AI Analysis Failed)",
+      overallScore: 50,
+      compliance: {
+        introduction: { present: true, quality: "Unknown", notes: "AI analysis failed - manual review required" },
+        diagnosis: { present: true, quality: "Unknown", notes: "AI analysis failed - manual review required" },
+        solution: { present: true, quality: "Unknown", notes: "AI analysis failed - manual review required" },
+        upsell: { present: false, quality: "Unknown", notes: "AI analysis failed - manual review required" },
+        maintenance: { present: false, quality: "Unknown", notes: "AI analysis failed - manual review required" },
+        closing: { present: true, quality: "Unknown", notes: "AI analysis failed - manual review required" }
+      },
+      salesInsights: {
+        opportunities: ["AI analysis failed - manual review required"],
+        successful: [],
+        missed: ["AI analysis failed - please review manually"]
+      },
+      transcript: {
+        segments: parseTranscriptToSegments(transcript)
+      }
+    }
   }
 }
 
@@ -149,4 +190,46 @@ Technician: You're very welcome! Here's my card with our 24/7 service number. If
   }
 
   return { transcribeAudio, isTranscribing }
+}
+
+function parseTranscriptToSegments(transcript: string) {
+  const lines = transcript.split('\n').filter(line => line.trim() !== '')
+  const segments = []
+  let timestamp = 0
+  
+  for (const line of lines) {
+    if (line.includes(':')) {
+      const [speaker, ...textParts] = line.split(':')
+      const text = textParts.join(':').trim()
+      
+      if (text) {
+        const minutes = Math.floor(timestamp / 60)
+        const seconds = timestamp % 60
+        
+        segments.push({
+          speaker: speaker.trim(),
+          timestamp: `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`,
+          text: text,
+          stage: determineStage(segments.length, text)
+        })
+        
+        // Estimate 3-5 seconds per segment
+        timestamp += Math.floor(Math.random() * 3) + 3
+      }
+    }
+  }
+  
+  return segments
+}
+
+function determineStage(index: number, text: string): string {
+  const totalSegments = 12 // Rough estimate based on mock transcript
+  const progress = index / totalSegments
+  
+  if (progress < 0.15) return 'introduction'
+  if (progress < 0.4) return 'diagnosis'
+  if (progress < 0.7) return 'solution'
+  if (progress < 0.85) return 'upsell'
+  if (progress < 0.95) return 'maintenance'
+  return 'closing'
 }

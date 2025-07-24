@@ -346,7 +346,7 @@ function App() {
                                       </div>
                                     </div>
                                     
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-2 flex-wrap">
                                       <Button
                                         size="sm"
                                         variant="outline"
@@ -361,38 +361,162 @@ function App() {
                                           
                                           try {
                                             setCurrentStep('Testing OpenAI API connection...')
-                                            console.log('Testing OpenAI API key...')
+                                            console.log('Testing OpenAI API key with raw request...')
                                             
-                                            const { testOpenAIAPI } = await import('@/services/openai')
-                                            const testResult = await testOpenAIAPI(openaiApiKey)
-                                            
-                                            if (testResult.success) {
-                                              setCurrentStep('✅ OpenAI API key is valid and ready!')
-                                              setTimeout(() => setCurrentStep(''), 3000)
-                                            } else {
-                                              throw new Error(testResult.error || 'API test failed')
+                                            // Direct API test with detailed error handling
+                                            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                                              method: 'POST',
+                                              headers: {
+                                                'Authorization': `Bearer ${openaiApiKey.trim()}`,
+                                                'Content-Type': 'application/json',
+                                              },
+                                              body: JSON.stringify({
+                                                model: 'gpt-4o-mini',
+                                                messages: [{ role: 'user', content: 'Test - respond with just "OK"' }],
+                                                max_tokens: 5
+                                              })
+                                            })
+
+                                            // Get response headers for debugging
+                                            const headers = {
+                                              'openai-organization': response.headers.get('openai-organization'),
+                                              'openai-processing-ms': response.headers.get('openai-processing-ms'),
+                                              'openai-version': response.headers.get('openai-version'),
+                                              'x-request-id': response.headers.get('x-request-id')
                                             }
+
+                                            console.log('OpenAI Response Headers:', headers)
+                                            
+                                            if (!response.ok) {
+                                              const errorData = await response.json().catch(() => ({}))
+                                              console.error('OpenAI API Error:', { status: response.status, headers, errorData })
+                                              
+                                              let errorMessage = `HTTP ${response.status}`
+                                              if (response.status === 401) {
+                                                errorMessage = 'Invalid API key - check format and permissions'
+                                              } else if (response.status === 429) {
+                                                errorMessage = 'Rate limit or quota exceeded - check billing'
+                                              } else if (response.status === 403) {
+                                                errorMessage = 'Access forbidden - check API key permissions'
+                                              } else if (errorData.error?.message) {
+                                                errorMessage = errorData.error.message
+                                              }
+                                              
+                                              setError(`OpenAI API Test Failed: ${errorMessage}`)
+                                              setDebugInfo(`Status: ${response.status}\nRequest ID: ${headers['x-request-id'] || 'N/A'}\nFull Error: ${JSON.stringify(errorData, null, 2)}`)
+                                              return
+                                            }
+
+                                            const data = await response.json()
+                                            console.log('OpenAI API Success:', { headers, responseLength: JSON.stringify(data).length })
+                                            
+                                            setCurrentStep('✅ OpenAI API key is valid and ready!')
+                                            setDebugInfo(`✅ Success!\nRequest ID: ${headers['x-request-id']}\nProcessing Time: ${headers['openai-processing-ms']}ms\nOrganization: ${headers['openai-organization'] || 'Default'}`)
+                                            setTimeout(() => {
+                                              setCurrentStep('')
+                                              setDebugInfo(null)
+                                            }, 5000)
                                             
                                           } catch (err) {
                                             console.error('OpenAI API test failed:', err)
-                                            const errorMessage = err instanceof Error ? err.message : 'API test failed'
+                                            const errorMessage = err instanceof Error ? err.message : 'Network error'
                                             setError(`OpenAI Test Failed: ${errorMessage}`)
                                             setCurrentStep('')
                                             
-                                            if (err instanceof Error && err.message.includes('Invalid OpenAI API key')) {
-                                              setDebugInfo('Please check that your API key is correct and has the format: sk-proj-...')
-                                            } else if (err instanceof Error && err.message.includes('quota')) {
-                                              setDebugInfo('Your OpenAI API quota may be exceeded. Check your OpenAI billing and usage.')
-                                            } else if (err instanceof Error && err.message.includes('403')) {
-                                              setDebugInfo('API key may not have proper permissions. Ensure you\'re using a valid OpenAI API key.')
+                                            if (err instanceof Error) {
+                                              setDebugInfo(`Network Error: ${err.message}\n\nThis could be:\n- Internet connection issue\n- CORS policy blocking the request\n- OpenAI API server unavailable`)
                                             }
                                           }
                                         }}
                                         disabled={!openaiApiKey || openaiApiKey.trim().length === 0}
-                                        className="flex-1"
+                                        className="flex-1 min-w-0"
                                       >
-                                        {currentStep.includes('Testing OpenAI') ? 'Testing...' : 'Test API Connection'}
+                                        {currentStep.includes('Testing OpenAI') ? 'Testing...' : 'Test API'}
                                       </Button>
+                                      
+                                      {openaiApiKey && (
+                                        <Button
+                                          size="sm"
+                                          onClick={async () => {
+                                            setError(null)
+                                            setDebugInfo(null)
+                                            setIsAnalyzing(true)
+                                            setCurrentStep('Quick OpenAI JSON test...')
+                                            
+                                            try {
+                                              console.log('Testing OpenAI JSON parsing with a simple request...')
+                                              
+                                              const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                                                method: 'POST',
+                                                headers: {
+                                                  'Authorization': `Bearer ${openaiApiKey.trim()}`,
+                                                  'Content-Type': 'application/json',
+                                                },
+                                                body: JSON.stringify({
+                                                  model: 'gpt-4o-mini',
+                                                  messages: [
+                                                    {
+                                                      role: 'system',
+                                                      content: 'You are a JSON-only response system. You must ONLY return valid JSON objects without any markdown formatting, explanations, or additional text. Your entire response must be parseable as JSON.'
+                                                    },
+                                                    {
+                                                      role: 'user',
+                                                      content: 'Return a simple JSON object with just one field: {"test": "success"}. IMPORTANT: Return ONLY the JSON object, no markdown, no explanations.'
+                                                    }
+                                                  ],
+                                                  temperature: 0.1,
+                                                  max_tokens: 50
+                                                })
+                                              })
+
+                                              if (!response.ok) {
+                                                const errorData = await response.json().catch(() => ({}))
+                                                throw new Error(`HTTP ${response.status}: ${errorData.error?.message || 'API error'}`)
+                                              }
+
+                                              const data = await response.json()
+                                              const rawContent = data.choices?.[0]?.message?.content
+
+                                              console.log('Raw OpenAI response:', rawContent)
+                                              setDebugInfo(`Raw response from OpenAI:\n"${rawContent}"\n\nTesting JSON parsing...`)
+
+                                              // Test the cleaning function
+                                              const { OpenAIAnalyzer } = await import('@/services/openai')
+                                              const analyzer = new OpenAIAnalyzer(openaiApiKey)
+                                              
+                                              try {
+                                                // Access the private method via a test
+                                                const cleaned = (analyzer as any).cleanJsonResponse(rawContent)
+                                                const parsed = JSON.parse(cleaned)
+                                                
+                                                setCurrentStep('✅ JSON parsing test successful!')
+                                                setDebugInfo(`✅ Success!\nRaw: "${rawContent}"\nCleaned: "${cleaned}"\nParsed: ${JSON.stringify(parsed)}`)
+                                                setTimeout(() => {
+                                                  setCurrentStep('')
+                                                  setDebugInfo(null)
+                                                }, 5000)
+                                                
+                                              } catch (parseError) {
+                                                setError(`JSON Parsing Failed: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`)
+                                                setDebugInfo(`❌ Parsing failed!\nRaw: "${rawContent}"\nError: ${parseError instanceof Error ? parseError.message : 'Unknown'}`)
+                                              }
+                                              
+                                            } catch (err) {
+                                              console.error('OpenAI JSON test failed:', err)
+                                              const errorMessage = err instanceof Error ? err.message : 'Test failed'
+                                              setError(`OpenAI JSON Test Failed: ${errorMessage}`)
+                                              setCurrentStep('')
+                                            } finally {
+                                              setIsAnalyzing(false)
+                                            }
+                                          }}
+                                          variant="outline"
+                                          disabled={isAnalyzing}
+                                          className="flex-1 min-w-0"
+                                        >
+                                          {isAnalyzing ? 'Testing...' : 'Test JSON'}
+                                        </Button>
+                                      )}
                                       
                                       {openaiApiKey && (
                                         <Button
@@ -425,11 +549,12 @@ function App() {
                                           }}
                                           variant="default"
                                           disabled={isAnalyzing}
-                                          className="flex-1"
+                                          className="flex-1 min-w-0"
                                         >
-                                          {isAnalyzing ? 'Testing...' : 'Test Full Analysis'}
+                                          {isAnalyzing ? 'Testing...' : 'Test Analysis'}
                                         </Button>
                                       )}
+                                    </div>
                                     </div>
                                     
                                     <p className="text-xs text-muted-foreground">

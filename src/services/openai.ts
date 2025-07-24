@@ -38,111 +38,102 @@ export class OpenAIAnalyzer {
   }
 
   private cleanJsonResponse(response: string): string {
-    // Remove markdown code blocks if present
+    if (!response || response.trim().length === 0) {
+      throw new Error('Empty response from OpenAI')
+    }
+
+    // Log the raw response for debugging
+    console.log('Raw OpenAI response length:', response.length)
+    console.log('Raw OpenAI response preview:', response.substring(0, 200))
+
     let cleaned = response.trim()
     
-    // Remove opening ```json or ``` 
-    if (cleaned.startsWith('```json')) {
-      cleaned = cleaned.substring(7)
-    } else if (cleaned.startsWith('```')) {
-      cleaned = cleaned.substring(3)
+    // Remove multiple types of markdown code block indicators
+    const codeBlockPatterns = [
+      /^```json\s*\n?/i,
+      /^```\s*\n?/,
+      /\n?```\s*$/,
+      /^json\s*\n?/i
+    ]
+    
+    for (const pattern of codeBlockPatterns) {
+      cleaned = cleaned.replace(pattern, '')
     }
     
-    // Remove closing ```
-    if (cleaned.endsWith('```')) {
-      cleaned = cleaned.substring(0, cleaned.length - 3)
-    }
-    
-    // Remove any remaining leading/trailing whitespace
+    // Remove any leading/trailing whitespace again
     cleaned = cleaned.trim()
     
-    // If the response contains text before or after JSON, try to extract just the JSON part
-    const jsonStart = cleaned.indexOf('{')
-    const jsonArrayStart = cleaned.indexOf('[')
+    // Handle cases where the AI includes explanatory text before/after JSON
+    // Look for the first { or [ and last } or ]
+    const jsonObjectMatch = cleaned.match(/^.*?(\{.*\}).*?$/s)
+    const jsonArrayMatch = cleaned.match(/^.*?(\[.*\]).*?$/s)
     
-    if (jsonStart === -1 && jsonArrayStart === -1) {
-      throw new Error('No JSON found in response')
+    if (jsonObjectMatch && jsonObjectMatch[1]) {
+      const candidate = jsonObjectMatch[1].trim()
+      try {
+        JSON.parse(candidate)
+        console.log('Successfully extracted JSON object')
+        return candidate
+      } catch {
+        console.log('Failed to parse extracted JSON object')
+      }
     }
     
-    // Try to parse the entire cleaned response first
+    if (jsonArrayMatch && jsonArrayMatch[1]) {
+      const candidate = jsonArrayMatch[1].trim()
+      try {
+        JSON.parse(candidate)
+        console.log('Successfully extracted JSON array')
+        return candidate
+      } catch {
+        console.log('Failed to parse extracted JSON array')
+      }
+    }
+    
+    // Try to parse the entire cleaned response as a fallback
     try {
       JSON.parse(cleaned)
+      console.log('Successfully parsed entire cleaned response')
       return cleaned
-    } catch {
-      // If that fails, try to extract JSON boundaries
+    } catch (parseError) {
+      console.error('Failed to parse cleaned response:', parseError)
     }
     
-    // Determine if it's an object or array and find the appropriate boundaries
-    let startIndex = -1
-    let startChar = ''
-    let endChar = ''
+    // More aggressive cleaning - look for JSON boundaries
+    const firstBrace = cleaned.indexOf('{')
+    const firstBracket = cleaned.indexOf('[')
+    const lastBrace = cleaned.lastIndexOf('}')
+    const lastBracket = cleaned.lastIndexOf(']')
     
-    if (jsonStart !== -1 && (jsonArrayStart === -1 || jsonStart < jsonArrayStart)) {
-      startIndex = jsonStart
-      startChar = '{'
-      endChar = '}'
-    } else {
-      startIndex = jsonArrayStart
-      startChar = '['
-      endChar = ']'
-    }
-    
-    // Find the matching closing bracket/brace with proper handling of nested structures
-    let bracketCount = 0
-    let endIndex = -1
-    let inString = false
-    let escapeNext = false
-    
-    for (let i = startIndex; i < cleaned.length; i++) {
-      const char = cleaned[i]
-      
-      if (escapeNext) {
-        escapeNext = false
-        continue
-      }
-      
-      if (char === '\\' && inString) {
-        escapeNext = true
-        continue
-      }
-      
-      if (char === '"' && !escapeNext) {
-        inString = !inString
-        continue
-      }
-      
-      if (!inString) {
-        if (char === startChar) {
-          bracketCount++
-        } else if (char === endChar) {
-          bracketCount--
-          if (bracketCount === 0) {
-            endIndex = i
-            break
-          }
-        }
+    // Try object extraction
+    if (firstBrace !== -1 && lastBrace !== -1 && firstBrace < lastBrace) {
+      const objectCandidate = cleaned.substring(firstBrace, lastBrace + 1)
+      try {
+        JSON.parse(objectCandidate)
+        console.log('Successfully extracted object with aggressive parsing')
+        return objectCandidate
+      } catch {
+        console.log('Aggressive object extraction failed')
       }
     }
     
-    if (endIndex === -1) {
-      // Try to find the last occurrence of the end character as a fallback
-      const lastEndChar = cleaned.lastIndexOf(endChar)
-      if (lastEndChar > startIndex) {
-        endIndex = lastEndChar
-      } else {
-        throw new Error('Malformed JSON: could not find closing bracket')
+    // Try array extraction
+    if (firstBracket !== -1 && lastBracket !== -1 && firstBracket < lastBracket) {
+      const arrayCandidate = cleaned.substring(firstBracket, lastBracket + 1)
+      try {
+        JSON.parse(arrayCandidate)
+        console.log('Successfully extracted array with aggressive parsing')
+        return arrayCandidate
+      } catch {
+        console.log('Aggressive array extraction failed')
       }
     }
     
-    const extracted = cleaned.substring(startIndex, endIndex + 1)
+    // If all else fails, log the problematic response and throw a descriptive error
+    console.error('Failed to extract valid JSON from response:')
+    console.error('Cleaned response:', cleaned.substring(0, 500))
     
-    // Validate the extracted JSON
-    try {
-      JSON.parse(extracted)
-      return extracted
-    } catch {
-      throw new Error('Extracted text is not valid JSON')
-    }
+    throw new Error(`Could not extract valid JSON from OpenAI response. Response preview: "${cleaned.substring(0, 100)}..."`)
   }
 
   private async makeRequest(messages: any[], temperature = 0.3): Promise<any> {
@@ -184,7 +175,15 @@ export class OpenAIAnalyzer {
   }
 
   async segmentTranscript(transcript: string): Promise<any[]> {
-    const prompt = `Analyze this service call transcript and segment it by conversation stages. Return a JSON array where each element represents a part of the conversation with these fields:
+    const prompt = `You are an expert at analyzing service call transcripts. Your task is to segment this transcript by conversation stages.
+
+CRITICAL: You must respond with ONLY a valid JSON array. Do not include:
+- Markdown formatting (no \`\`\`json or \`\`\`)
+- Explanatory text before or after the JSON
+- Code blocks
+- Any other text
+
+The response must start with [ and end with ]. Each array element must have these exact fields:
 - speaker: "Technician" or "Customer" 
 - timestamp: estimated time like "00:15" 
 - text: the actual spoken text
@@ -198,15 +197,15 @@ Stages definition:
 - maintenance: Discussing service plans, future maintenance, warranties
 - closing: Wrapping up, thank yous, scheduling follow-ups
 
-Here's the transcript:
+Here's the transcript to analyze:
 ${transcript}
 
-IMPORTANT: Return ONLY a valid JSON array, no markdown formatting, no explanation text, no code blocks. Start with [ and end with ].`
+Remember: ONLY return the JSON array, nothing else.`
 
     const messages = [
       {
         role: 'system',
-        content: 'You are an expert at analyzing service call transcripts. Always return valid JSON arrays as requested, with no markdown formatting or additional text. Your response must be parseable JSON.'
+        content: 'You are a JSON-only response system. You must ONLY return valid JSON arrays without any markdown formatting, explanations, or additional text. Your entire response must be parseable as JSON.'
       },
       {
         role: 'user',
@@ -219,7 +218,10 @@ IMPORTANT: Return ONLY a valid JSON array, no markdown formatting, no explanatio
     
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
+        console.log(`Segmentation attempt ${attempt}/3`)
         const response = await this.makeRequest(messages, 0.1) // Lower temperature for more consistent output
+        console.log(`Raw response received, length: ${response?.length || 0}`)
+        
         const cleanedResponse = this.cleanJsonResponse(response)
         const segments = JSON.parse(cleanedResponse)
         
@@ -234,6 +236,7 @@ IMPORTANT: Return ONLY a valid JSON array, no markdown formatting, no explanatio
           }
         }
         
+        console.log(`Successfully parsed ${segments.length} segments`)
         return segments
         
       } catch (parseError) {
@@ -241,18 +244,17 @@ IMPORTANT: Return ONLY a valid JSON array, no markdown formatting, no explanatio
         console.error(`Attempt ${attempt}/3 failed to parse OpenAI segmentation response:`, parseError)
         
         if (attempt === 3) {
-          // Try to provide more helpful error messages based on the response content
-          let errorMessage = 'Invalid JSON'
-          if (lastError) {
-            errorMessage = lastError.message
-            errorMessage += `. Failed after 3 attempts. This may be due to incomplete AI response or network issues.`
-          }
-          
-          throw new Error(`Failed to parse OpenAI segmentation response: ${errorMessage}`)
+          // Provide more helpful error context
+          throw new Error(`Failed to parse OpenAI segmentation response after 3 attempts: ${lastError.message}. The AI may be returning non-JSON content or there could be formatting issues.`)
         }
         
-        // Add a small delay before retry
+        // Add a small delay before retry and modify prompt to be more explicit
         await new Promise(resolve => setTimeout(resolve, 1000))
+        
+        // Make the prompt even more explicit for retry attempts
+        if (attempt === 2) {
+          messages[1].content = `${prompt}\n\nIMPORTANT: Your previous response was not valid JSON. Please ensure your response is ONLY a JSON array with no other text.`
+        }
       }
     }
     
@@ -270,15 +272,23 @@ IMPORTANT: Return ONLY a valid JSON array, no markdown formatting, no explanatio
       closing: segments.filter(s => s.stage === 'closing')
     }
 
-    const analysisPrompt = `Analyze each stage of this service call for compliance with best practices. For each stage, determine:
+    const analysisPrompt = `You are a service call quality analyst. Analyze each stage for compliance with best practices.
+
+CRITICAL: You must respond with ONLY a valid JSON object. Do not include:
+- Markdown formatting (no \`\`\`json or \`\`\`)
+- Explanatory text before or after the JSON
+- Code blocks
+- Any other text
+
+The response must start with { and end with }. For each stage, determine:
 1. present: true/false if the stage occurred
 2. quality: "Excellent", "Good", "Fair", or "Poor" 
 3. notes: specific observations about what was done well or missed
 
-Stage segments:
+Stage segments to analyze:
 ${JSON.stringify(stageSegments, null, 2)}
 
-Return a JSON object with this exact structure:
+You must return this exact JSON structure:
 {
   "introduction": {"present": boolean, "quality": string, "notes": string},
   "diagnosis": {"present": boolean, "quality": string, "notes": string},
@@ -288,12 +298,12 @@ Return a JSON object with this exact structure:
   "closing": {"present": boolean, "quality": string, "notes": string}
 }
 
-IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation text, no code blocks. Start with { and end with }.`
+Remember: ONLY return the JSON object, nothing else.`
 
     const messages = [
       {
         role: 'system',
-        content: 'You are an expert service call quality analyst. Evaluate each stage objectively and provide actionable feedback. Return only valid JSON without any markdown formatting.'
+        content: 'You are a JSON-only response system. You must ONLY return valid JSON objects without any markdown formatting, explanations, or additional text. Your entire response must be parseable as JSON.'
       },
       {
         role: 'user',
@@ -301,7 +311,7 @@ IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation t
       }
     ]
 
-    const response = await this.makeRequest(messages, 0.1) // Lower temperature for consistent output
+    const response = await this.makeRequest(messages, 0.1)
     
     try {
       const cleanedResponse = this.cleanJsonResponse(response)
@@ -315,28 +325,35 @@ IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation t
   }
 
   async analyzeSalesInsights(segments: any[]): Promise<CallAnalysis['salesInsights']> {
-    const salesPrompt = `Analyze this service call transcript for sales performance. Identify:
+    const salesPrompt = `You are a sales performance analyst. Analyze this service call transcript for sales performance.
 
+CRITICAL: You must respond with ONLY a valid JSON object. Do not include:
+- Markdown formatting (no \`\`\`json or \`\`\`)
+- Explanatory text before or after the JSON
+- Code blocks
+- Any other text
+
+The response must start with { and end with }. Identify:
 1. opportunities: potential sales opportunities mentioned or hinted at by the customer
 2. successful: sales techniques or offers that worked well
 3. missed: opportunities the technician could have capitalized on but didn't
 
-Transcript segments:
+Transcript segments to analyze:
 ${JSON.stringify(segments, null, 2)}
 
-Return a JSON object:
+You must return this exact JSON structure:
 {
   "opportunities": ["string array of opportunities identified"],
   "successful": ["string array of successful sales actions"], 
   "missed": ["string array of missed opportunities"]
 }
 
-IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation text, no code blocks. Start with { and end with }.`
+Remember: ONLY return the JSON object, nothing else.`
 
     const messages = [
       {
         role: 'system',
-        content: 'You are a sales performance analyst specializing in service calls. Focus on concrete, actionable insights. Return only valid JSON without any markdown formatting.'
+        content: 'You are a JSON-only response system. You must ONLY return valid JSON objects without any markdown formatting, explanations, or additional text. Your entire response must be parseable as JSON.'
       },
       {
         role: 'user',
@@ -344,7 +361,7 @@ IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation t
       }
     ]
 
-    const response = await this.makeRequest(messages, 0.1) // Lower temperature for consistent output
+    const response = await this.makeRequest(messages, 0.1)
     
     try {
       const cleanedResponse = this.cleanJsonResponse(response)

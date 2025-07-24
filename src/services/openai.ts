@@ -43,80 +43,119 @@ export class OpenAIAnalyzer {
     }
 
     let cleaned = response.trim()
+    console.log('Raw response from OpenAI:', cleaned.substring(0, 200) + '...')
     
-    // Remove markdown code blocks
-    cleaned = cleaned.replace(/^```json\s*\n?/i, '')
-    cleaned = cleaned.replace(/^```\s*\n?/, '')
-    cleaned = cleaned.replace(/\n?```\s*$/, '')
-    cleaned = cleaned.replace(/^json\s*\n?/i, '')
+    // Remove markdown code blocks more aggressively
+    cleaned = cleaned.replace(/^```json\s*\n?/gmi, '')
+    cleaned = cleaned.replace(/^```\s*\n?/gm, '')
+    cleaned = cleaned.replace(/\n?```\s*$/gm, '')
+    cleaned = cleaned.replace(/^json\s*\n?/gmi, '')
     cleaned = cleaned.trim()
     
-    // Extract JSON from response
-    const jsonObjectMatch = cleaned.match(/^.*?(\{.*\}).*?$/s)
-    const jsonArrayMatch = cleaned.match(/^.*?(\[.*\]).*?$/s)
+    // Remove any leading/trailing text that isn't JSON
+    const jsonStart = Math.max(cleaned.indexOf('{'), cleaned.indexOf('['))
+    const jsonEndBrace = cleaned.lastIndexOf('}')
+    const jsonEndBracket = cleaned.lastIndexOf(']')
+    const jsonEnd = Math.max(jsonEndBrace, jsonEndBracket)
     
-    if (jsonObjectMatch && jsonObjectMatch[1]) {
-      try {
-        JSON.parse(jsonObjectMatch[1])
-        return jsonObjectMatch[1]
-      } catch {}
+    if (jsonStart !== -1 && jsonEnd !== -1 && jsonStart < jsonEnd) {
+      cleaned = cleaned.substring(jsonStart, jsonEnd + 1)
     }
     
-    if (jsonArrayMatch && jsonArrayMatch[1]) {
-      try {
-        JSON.parse(jsonArrayMatch[1])
-        return jsonArrayMatch[1]
-      } catch {}
-    }
+    // Fix common JSON issues
+    cleaned = this.fixCommonJsonIssues(cleaned)
     
-    // Handle truncated JSON - try to fix common issues
-    const firstBrace = cleaned.indexOf('{')
-    const firstBracket = cleaned.indexOf('[')
-    const lastBrace = cleaned.lastIndexOf('}')
-    const lastBracket = cleaned.lastIndexOf(']')
-    
-    // Try to repair truncated array
-    if (firstBracket !== -1 && cleaned.includes('"speaker"') && cleaned.includes('"text"')) {
-      const arrayStart = cleaned.indexOf('[')
-      let candidate = cleaned.substring(arrayStart)
+    // Try to parse the cleaned version
+    try {
+      JSON.parse(cleaned)
+      console.log('Successfully cleaned JSON, length:', cleaned.length)
+      return cleaned
+    } catch (parseError) {
+      console.log('Initial parse failed, attempting repairs...')
       
-      // Remove incomplete trailing elements
-      const lastCompleteObject = candidate.lastIndexOf('}')
-      if (lastCompleteObject !== -1) {
-        candidate = candidate.substring(0, lastCompleteObject + 1)
+      // Attempt more aggressive repairs
+      const repaired = this.repairTruncatedJson(cleaned)
+      if (repaired) {
+        console.log('Successfully repaired JSON')
+        return repaired
+      }
+      
+      console.error('All JSON repair attempts failed')
+      throw new Error(`Could not extract valid JSON. Raw response: "${response.substring(0, 300)}..."`)
+    }
+  }
+
+  private fixCommonJsonIssues(json: string): string {
+    // Fix trailing commas
+    json = json.replace(/,(\s*[}\]])/g, '$1')
+    
+    // Fix missing quotes around keys
+    json = json.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
+    
+    // Fix single quotes to double quotes
+    json = json.replace(/'/g, '"')
+    
+    // Fix escaped quotes issues
+    json = json.replace(/\\"/g, '\\"')
+    
+    return json
+  }
+
+  private repairTruncatedJson(json: string): string | null {
+    try {
+      // If it's an array, try to close it properly
+      if (json.startsWith('[')) {
+        // Find the last complete object
+        let depth = 0
+        let lastCompleteIndex = -1
         
-        // Ensure proper array closure
-        if (!candidate.endsWith(']')) {
-          candidate = candidate + ']'
+        for (let i = 0; i < json.length; i++) {
+          const char = json[i]
+          if (char === '{') depth++
+          else if (char === '}') {
+            depth--
+            if (depth === 0) {
+              lastCompleteIndex = i
+            }
+          }
         }
         
-        try {
-          JSON.parse(candidate)
-          return candidate
-        } catch (error) {
-          console.log('Repair attempt failed:', error)
+        if (lastCompleteIndex > 0) {
+          const truncated = json.substring(0, lastCompleteIndex + 1) + ']'
+          JSON.parse(truncated) // Test if valid
+          return truncated
         }
       }
+      
+      // If it's an object, try to close it properly
+      if (json.startsWith('{')) {
+        let depth = 0
+        let lastCompleteIndex = -1
+        
+        for (let i = 0; i < json.length; i++) {
+          const char = json[i]
+          if (char === '{') depth++
+          else if (char === '}') {
+            depth--
+            if (depth === 0) {
+              lastCompleteIndex = i
+              break
+            }
+          }
+        }
+        
+        if (lastCompleteIndex > 0) {
+          const truncated = json.substring(0, lastCompleteIndex + 1)
+          JSON.parse(truncated) // Test if valid
+          return truncated
+        }
+      }
+      
+    } catch (error) {
+      console.log('Repair attempt failed:', error)
     }
     
-    // Standard extraction fallback
-    if (firstBrace !== -1 && lastBrace !== -1 && firstBrace < lastBrace) {
-      const objectCandidate = cleaned.substring(firstBrace, lastBrace + 1)
-      try {
-        JSON.parse(objectCandidate)
-        return objectCandidate
-      } catch {}
-    }
-    
-    if (firstBracket !== -1 && lastBracket !== -1 && firstBracket < lastBracket) {
-      const arrayCandidate = cleaned.substring(firstBracket, lastBracket + 1)
-      try {
-        JSON.parse(arrayCandidate)
-        return arrayCandidate
-      } catch {}
-    }
-    
-    throw new Error(`Could not extract valid JSON from response: "${cleaned.substring(0, 100)}..."`)
+    return null
   }
 
   private async makeRequest(messages: any[], temperature = 0.3, fastMode = true): Promise<any> {
@@ -162,31 +201,47 @@ export class OpenAIAnalyzer {
 
   async segmentTranscript(transcript: string): Promise<any[]> {
     // If transcript is very long, break it into smaller chunks
-    const maxInputLength = 6000
+    const maxInputLength = 8000 // Increased limit
     
     if (transcript.length > maxInputLength) {
       console.log(`Transcript too long (${transcript.length} chars), processing in chunks...`)
       return await this.segmentTranscriptInChunks(transcript, maxInputLength)
     }
     
-    const prompt = `Analyze this service call transcript and return a JSON array. Each element needs: speaker, timestamp, text, stage.
+    // Enhanced prompt with better formatting instructions
+    const prompt = `Analyze this service call transcript and segment it. Return ONLY a JSON array with this exact format:
 
-IMPORTANT SPEAKER IDENTIFICATION:
-- Look for introductions like "This is [name] from [company]" = Technician
-- Customer typically describes problems, asks questions about cost/timing
-- Technician typically explains solutions, offers services, uses technical terms
-- DO NOT mix up speakers - maintain consistency throughout
+[
+  {
+    "speaker": "Technician" or "Customer",
+    "timestamp": "MM:SS",
+    "text": "exact spoken text",
+    "stage": "introduction|diagnosis|solution|upsell|maintenance|closing"
+  }
+]
 
-Stages: introduction, diagnosis, solution, upsell, maintenance, closing
+CRITICAL RULES:
+1. RETURN ONLY THE JSON ARRAY - NO MARKDOWN, NO EXPLANATIONS
+2. Speaker identification:
+   - "Technician" = introduces company, offers services, explains technical solutions
+   - "Customer" = asks for help, describes problems, responds to offers
+3. Maintain speaker consistency throughout the call
+4. Assign realistic timestamps (start at 00:00, increment logically)
+5. Stage mapping:
+   - introduction: greetings, introductions, initial contact
+   - diagnosis: problem identification, questioning, assessment
+   - solution: explaining repair/service, implementation
+   - upsell: offering additional services/products
+   - maintenance: maintenance plans, future service offers
+   - closing: thank you, goodbye, call completion
 
-Return ONLY a valid JSON array starting with [ and ending with ]. NO extra text, no explanations:
-
+TRANSCRIPT TO ANALYZE:
 ${transcript}`
 
     const messages = [
       { 
         role: 'system', 
-        content: 'You are an expert at analyzing service call transcripts. Return only JSON arrays with accurate speaker identification. No markdown, no explanations, no text outside the JSON array.' 
+        content: 'You are a JSON-only response system. You must return ONLY valid JSON arrays. Never include markdown, explanations, or any text outside the JSON structure. Your entire response must be parseable as a JSON array.' 
       },
       { role: 'user', content: prompt }
     ]
@@ -199,36 +254,119 @@ ${transcript}`
         const cleanedResponse = this.cleanJsonResponse(response)
         const segments = JSON.parse(cleanedResponse)
         
-        if (!Array.isArray(segments) || segments.length === 0) {
-          throw new Error('Invalid segments returned - not an array or empty')
+        if (!Array.isArray(segments)) {
+          throw new Error(`Expected array, got ${typeof segments}`)
         }
         
-        // Validate segment structure
-        const validSegments = segments.filter(seg => 
-          seg && typeof seg.speaker === 'string' && typeof seg.text === 'string'
-        )
+        if (segments.length === 0) {
+          throw new Error('Empty segments array returned')
+        }
+        
+        // Validate and clean segment structure
+        const validSegments = this.validateAndCleanSegments(segments)
         
         if (validSegments.length === 0) {
-          throw new Error('No valid segments found in response')
+          throw new Error('No valid segments found after validation')
         }
         
-        // Post-process to fix speaker consistency issues
+        // Post-process to fix speaker consistency and improve stage assignments
         const correctedSegments = this.correctSpeakerAssignments(validSegments)
+        const finalSegments = this.improveStageAssignments(correctedSegments)
         
-        console.log(`Successfully parsed ${correctedSegments.length} segments`)
-        return correctedSegments
+        console.log(`Successfully parsed ${finalSegments.length} segments`)
+        return finalSegments
         
       } catch (parseError) {
         console.error(`Attempt ${attempt}/3 failed:`, parseError)
         if (attempt === 3) {
-          throw new Error(`Segmentation failed: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`)
+          throw new Error(`Fast segmentation failed: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`)
         }
-        // Wait before retry
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        
+        // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
       }
     }
     
     throw new Error('Segmentation failed after all retries')
+  }
+
+  private validateAndCleanSegments(segments: any[]): any[] {
+    return segments.filter(seg => {
+      // Must have required fields
+      if (!seg || typeof seg !== 'object') return false
+      if (!seg.speaker || typeof seg.speaker !== 'string') return false
+      if (!seg.text || typeof seg.text !== 'string') return false
+      
+      // Clean and normalize
+      seg.speaker = seg.speaker.trim()
+      seg.text = seg.text.trim()
+      seg.timestamp = seg.timestamp || '00:00'
+      seg.stage = seg.stage || 'diagnosis'
+      
+      // Normalize speaker names
+      const speaker = seg.speaker.toLowerCase()
+      if (speaker.includes('tech') || speaker.includes('service') || speaker.includes('rep')) {
+        seg.speaker = 'Technician'
+      } else if (speaker.includes('customer') || speaker.includes('client') || speaker.includes('caller')) {
+        seg.speaker = 'Customer'
+      } else {
+        // Auto-detect based on content
+        const text = seg.text.toLowerCase()
+        if (text.includes('this is') && text.includes('from') || 
+            text.includes('i can') || text.includes('we offer') ||
+            text.includes('let me') || text.includes('system')) {
+          seg.speaker = 'Technician'
+        } else {
+          seg.speaker = 'Customer'
+        }
+      }
+      
+      return seg.text.length > 3 // Filter out very short segments
+    })
+  }
+
+  private improveStageAssignments(segments: any[]): any[] {
+    // Use content analysis to improve stage assignments
+    return segments.map((segment, index) => {
+      const text = segment.text.toLowerCase()
+      const isEarly = index < segments.length * 0.2
+      const isLate = index > segments.length * 0.8
+      
+      let stage = segment.stage
+      
+      // Introduction stage indicators
+      if (isEarly && (text.includes('hello') || text.includes('good morning') || 
+          text.includes('this is') || text.includes('from'))) {
+        stage = 'introduction'
+      }
+      // Closing stage indicators  
+      else if (isLate && (text.includes('thank you') || text.includes('goodbye') ||
+          text.includes('have a') || text.includes('take care'))) {
+        stage = 'closing'
+      }
+      // Diagnosis stage indicators
+      else if (text.includes('problem') || text.includes('issue') || text.includes('wrong') ||
+               text.includes('broken') || text.includes('not working')) {
+        stage = 'diagnosis'
+      }
+      // Solution stage indicators
+      else if (text.includes('fix') || text.includes('repair') || text.includes('replace') ||
+               text.includes('install') || text.includes('solution')) {
+        stage = 'solution'
+      }
+      // Upsell stage indicators
+      else if (text.includes('also offer') || text.includes('upgrade') || 
+               text.includes('additional') || text.includes('recommend')) {
+        stage = 'upsell'
+      }
+      // Maintenance stage indicators
+      else if (text.includes('maintenance') || text.includes('service plan') ||
+               text.includes('annual') || text.includes('check')) {
+        stage = 'maintenance'
+      }
+      
+      return { ...segment, stage }
+    })
   }
 
   private async segmentTranscriptInChunks(transcript: string, chunkSize: number): Promise<any[]> {

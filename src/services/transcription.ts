@@ -44,11 +44,13 @@ class AssemblyAIProvider implements TranscriptionProvider {
       body: JSON.stringify({
         audio_url: upload_url,
         speaker_labels: true, // Enable speaker identification
+        speakers_expected: 2, // Service calls typically have 2 speakers
         auto_chapters: false,
         filter_profanity: false,
         format_text: true,
         punctuate: true,
-        dual_channel: false
+        dual_channel: false,
+        language_detection: true
       })
     })
 
@@ -95,18 +97,103 @@ class AssemblyAIProvider implements TranscriptionProvider {
   }
 
   private formatTranscriptWithSpeakers(result: any): string {
+    console.log('AssemblyAI result structure:', {
+      hasUtterances: !!result.utterances,
+      utteranceCount: result.utterances?.length || 0,
+      hasText: !!result.text,
+      textLength: result.text?.length || 0
+    })
+
     if (!result.utterances || result.utterances.length === 0) {
+      console.log('No utterances found, using basic transcript')
       // Fallback to basic transcript without speaker labels
-      return result.text || 'Transcription completed but no text returned'
+      const text = result.text || 'Transcription completed but no text returned'
+      
+      // Try to add basic speaker detection for service calls
+      return this.addBasicSpeakerLabelsToText(text)
     }
 
-    // Format with speaker labels
-    return result.utterances
-      .map((utterance: any) => {
-        const speaker = utterance.speaker === 'A' ? 'Technician' : 'Customer'
-        return `${speaker}: ${utterance.text}`
+    console.log('Found utterances, formatting with speakers...')
+    // Format with proper speaker labels from AssemblyAI
+    const formatted = result.utterances
+      .map((utterance: any, index: number) => {
+        // Determine speaker role based on content and position
+        let speakerRole = 'Speaker ' + utterance.speaker
+        
+        // For service calls, try to identify technician vs customer
+        if (utterance.speaker === 'A') {
+          // First speaker is often the technician in service calls
+          speakerRole = index === 0 || this.isLikelyTechnician(utterance.text) ? 'Technician' : 'Customer'
+        } else if (utterance.speaker === 'B') {
+          speakerRole = index === 0 || this.isLikelyTechnician(utterance.text) ? 'Technician' : 'Customer'
+        }
+        
+        // Format timestamp if available
+        const timestamp = utterance.start ? `[${this.formatTimestamp(utterance.start)}]` : ''
+        
+        return `${speakerRole}${timestamp ? ' ' + timestamp : ''}: ${utterance.text}`
       })
       .join('\n\n')
+
+    console.log('Formatted transcript with speakers, length:', formatted.length)
+    return formatted
+  }
+
+  private isLikelyTechnician(text: string): boolean {
+    const technicianWords = [
+      'technician', 'repair', 'service', 'fix', 'check', 'install', 'maintenance',
+      'system', 'unit', 'motor', 'compressor', 'filter', 'ductwork', 'hvac',
+      'good morning', 'good afternoon', 'this is', 'from', 'company', 'solutions'
+    ]
+    
+    const lowerText = text.toLowerCase()
+    return technicianWords.some(word => lowerText.includes(word))
+  }
+
+  private formatTimestamp(seconds: number): string {
+    const minutes = Math.floor(seconds / 60)
+    const remainingSeconds = Math.floor(seconds % 60)
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
+  }
+
+  private addBasicSpeakerLabelsToText(text: string): string {
+    // Fallback method when utterances aren't available
+    const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0)
+    let currentSpeaker = 'Technician'
+    
+    return sentences.map((sentence, index) => {
+      const trimmed = sentence.trim()
+      if (!trimmed) return ''
+      
+      // Switch speakers based on conversation patterns
+      if (index > 0) {
+        // Customer response indicators
+        if (this.isLikelyCustomerResponse(trimmed)) {
+          currentSpeaker = 'Customer'
+        }
+        // Technician response indicators
+        else if (this.isLikelyTechnician(trimmed)) {
+          currentSpeaker = 'Technician'
+        }
+        // Alternate speakers for dialogue
+        else if (index % 3 === 0) {
+          currentSpeaker = currentSpeaker === 'Technician' ? 'Customer' : 'Technician'
+        }
+      }
+      
+      return `${currentSpeaker}: ${trimmed}.`
+    }).join('\n\n')
+  }
+
+  private isLikelyCustomerResponse(text: string): boolean {
+    const customerWords = [
+      'thank you', 'okay', 'yes', 'no', 'that sounds', 'how much', 'when',
+      'my', 'our', 'we have', 'i have', 'problem', 'issue', 'broken',
+      'not working', 'stopped', 'noise'
+    ]
+    
+    const lowerText = text.toLowerCase()
+    return customerWords.some(word => lowerText.includes(word))
   }
 }
 

@@ -84,7 +84,7 @@ function App() {
       
       let analysisResult
       if (aiProvider === 'openai' && openaiApiKey) {
-        setCurrentStep('Analyzing with OpenAI (fast mode with gpt-3.5-turbo)...')
+        setCurrentStep('Analyzing with OpenAI GPT-3.5-Turbo (fast mode - ~60% faster)...')
         console.log('Using OpenAI fast mode for enhanced analysis...')
         analysisResult = await analyzeServiceCallWithOpenAI(transcript, openaiApiKey)
         console.log('OpenAI fast analysis completed successfully')
@@ -189,8 +189,8 @@ function App() {
             <p className="text-muted-foreground">Upload a service call recording to analyze technician performance and sales opportunities</p>
             <div className="mt-4 flex justify-center">
               <Badge variant="default" className="bg-green-600">
-                {aiProvider === 'openai' && openaiApiKey ? 'OpenAI Fast Analysis (gpt-3.5-turbo)' : 
-                 aiProvider === 'gemini' && geminiApiKey ? 'Gemini AI Enhanced Analysis' : 
+                {aiProvider === 'openai' && openaiApiKey ? 'AssemblyAI + OpenAI GPT-3.5-Turbo (Fast)' : 
+                 aiProvider === 'gemini' && geminiApiKey ? 'AssemblyAI + Gemini AI Enhanced' : 
                  'AssemblyAI + Spark AI Analysis'}
               </Badge>
             </div>
@@ -298,7 +298,7 @@ function App() {
                                       className="rounded border-gray-300"
                                     />
                                     <label htmlFor="provider-openai" className="text-sm">
-                                      OpenAI (Fast analysis with GPT-3.5-turbo)
+                                      OpenAI (GPT-3.5-Turbo - Fast & Cost-Effective)
                                     </label>
                                     {aiProvider === 'openai' && (
                                       <Badge variant={openaiApiKey ? "default" : "destructive"} className="text-xs">
@@ -722,7 +722,7 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
                               
                               let analysisResult
                               if (aiProvider === 'openai' && openaiApiKey) {
-                                setCurrentStep('Test analysis: Using OpenAI fast mode...')
+                                setCurrentStep('Test analysis: Using OpenAI GPT-3.5-Turbo (fast mode)...')
                                 console.log('Using OpenAI fast mode for test analysis...')
                                 analysisResult = await analyzeServiceCallWithOpenAI(testTranscript, openaiApiKey)
                                 console.log('OpenAI fast test analysis completed successfully')
@@ -805,7 +805,7 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
               </CardTitle>
               <div className="flex items-center gap-2">
                 <Badge variant={aiProvider !== 'spark' ? "default" : "secondary"}>
-                  {aiProvider === 'openai' && openaiApiKey ? 'OpenAI Fast Analysis' : 
+                  {aiProvider === 'openai' && openaiApiKey ? 'OpenAI GPT-3.5-Turbo Analysis' : 
                    aiProvider === 'gemini' && geminiApiKey ? 'Gemini AI Analysis' : 'Spark AI Analysis'}
                 </Badge>
               </div>

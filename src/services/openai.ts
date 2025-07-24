@@ -234,7 +234,6 @@ export class OpenAIAnalyzer {
       return null
     }
   }
-  }
 
   private async makeRequest(messages: any[], temperature = 0.3, fastMode = true): Promise<any> {
     // Use faster model for most operations but increase token limits significantly

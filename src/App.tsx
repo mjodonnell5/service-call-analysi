@@ -7,10 +7,9 @@ import { Progress } from '@/components/ui/progress'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { useKV } from '@github/spark/hooks'
-import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendingUp, Clock, Microphone, AlertTriangle, Settings } from '@phosphor-icons/react'
+import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendingUp, Clock, Microphone, AlertTriangle } from '@phosphor-icons/react'
 import { analyzeServiceCall, useRealTranscription, useMockTranscription } from '@/components/CallAnalyzer'
 import { InsightsPanel } from '@/components/InsightsPanel'
-import { ConfigurationPanel } from '@/components/ConfigurationPanel'
 import { TranscriptionConfig } from '@/services/transcription'
 
 interface CallAnalysis {
@@ -41,12 +40,14 @@ interface CallAnalysis {
 
 function App() {
   const [analysis, setAnalysis] = useKV<CallAnalysis | null>('call-analysis', null)
-  const [transcriptionConfig, setTranscriptionConfig] = useKV<TranscriptionConfig | null>('transcription-config', null)
+  const [transcriptionConfig, setTranscriptionConfig] = useKV<TranscriptionConfig | null>('transcription-config', {
+    provider: 'assemblyai',
+    apiKey: '6e1ea8623e884e45b0da2f9b33bb06f9'
+  })
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [currentStep, setCurrentStep] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<string | null>(null)
-  const [showConfig, setShowConfig] = useState(false)
   
   // Use real transcription if configured, fallback to mock
   const { transcribeAudio: realTranscribe, isTranscribing: isRealTranscribing } = useRealTranscription(transcriptionConfig)
@@ -131,34 +132,12 @@ function App() {
             <h1 className="text-3xl font-bold text-foreground mb-2">Service Call Analysis Dashboard</h1>
             <p className="text-muted-foreground">Upload a service call recording to analyze technician performance and sales opportunities</p>
             <div className="mt-4 flex justify-center">
-              {transcriptionConfig ? (
-                <Badge variant="default" className="bg-green-600">
-                  Production Mode - Real Transcription Active
-                </Badge>
-              ) : (
-                <Badge variant="secondary">
-                  Demo Mode - Setup Real Transcription for Production
-                </Badge>
-              )}
+              <Badge variant="default" className="bg-green-600">
+                Production Mode - AssemblyAI Transcription Active
+              </Badge>
             </div>
           </div>
 
-          {showConfig ? (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold">Transcription Configuration</h2>
-                <Button variant="outline" onClick={() => setShowConfig(false)}>
-                  Back to Upload
-                </Button>
-              </div>
-              <ConfigurationPanel 
-                onConfigured={(config) => {
-                  setTranscriptionConfig(config)
-                  setShowConfig(false)
-                }} 
-              />
-            </div>
-          ) : (
             <div className="space-y-6">
               <Card className="max-w-md mx-auto">
                 <CardHeader className="text-center">
@@ -224,36 +203,18 @@ function App() {
                         <AlertDescription>
                           <div className="space-y-2">
                             <div className="flex items-center justify-between">
-                              <strong>
-                                {transcriptionConfig ? 'Real AI Transcription Active' : 'Demo Mode'}
-                              </strong>
-                              {transcriptionConfig && (
-                                <Badge variant="secondary">
-                                  {transcriptionConfig.provider.toUpperCase()}
-                                </Badge>
-                              )}
+                              <strong>AssemblyAI Transcription Active</strong>
+                              <Badge variant="secondary">
+                                PRODUCTION
+                              </Badge>
                             </div>
                             <p className="text-sm">
-                              {transcriptionConfig 
-                                ? 'Using real transcription API for production-quality results.'
-                                : 'Using demo transcription. Configure real API for production use.'
-                              }
+                              Using AssemblyAI with speaker identification for production-quality results.
                             </p>
                           </div>
                         </AlertDescription>
                       </Alert>
 
-                      <div className="flex gap-2">
-                        <Button 
-                          variant="outline" 
-                          onClick={() => setShowConfig(true)}
-                          className="flex items-center gap-2 flex-1"
-                        >
-                          <Settings size={16} />
-                          {transcriptionConfig ? 'Reconfigure API' : 'Setup Real Transcription'}
-                        </Button>
-                      </div>
-                      
                       <div className="mt-4 pt-4 border-t border-border">
                         <p className="text-xs text-muted-foreground mb-2">For testing purposes:</p>
                         <Button 
@@ -300,7 +261,6 @@ Technician: You're welcome! Have a great day!`
                 </CardContent>
               </Card>
             </div>
-          )}
         </div>
       </div>
     )

@@ -143,74 +143,56 @@ export async function analyzeServiceCall(transcript: string): Promise<AnalysisRe
   console.log('Starting comprehensive AI analysis of transcript...')
   console.log('Transcript length:', transcript.length, 'characters')
   
-  try {
-    // Stage 1: Parse and segment the transcript with stage identification
-    console.log('Stage 1: Segmenting transcript and identifying stages...')
-    const segments = await segmentTranscriptWithAI(transcript)
-    console.log(`Stage 1 complete: ${segments.length} segments identified`)
-    
-    // Verify we have segments before proceeding
-    if (!segments || segments.length === 0) {
-      throw new Error('No segments were identified from the transcript')
-    }
-    
-    // Stage 2: Analyze compliance for each stage
-    console.log('Stage 2: Analyzing compliance for each stage...')
-    const compliance = await analyzeComplianceWithAI(transcript, segments)
-    console.log('Stage 2 complete: Compliance analysis finished')
-    
-    // Stage 3: Identify sales insights
-    console.log('Stage 3: Analyzing sales opportunities...')
-    const salesInsights = await analyzeSalesInsightsWithAI(transcript, segments)
-    console.log('Stage 3 complete: Sales insights identified')
-    
-    // Stage 4: Generate overall assessment
-    console.log('Stage 4: Generating overall assessment...')
-    const overallAssessment = await generateOverallAssessmentWithAI(transcript, compliance, salesInsights)
-    console.log('Stage 4 complete: Overall assessment generated')
-    
-    const analysis: AnalysisResult = {
-      callType: overallAssessment.callType,
-      overallScore: overallAssessment.score,
-      compliance,
-      salesInsights,
-      transcript: { segments }
-    }
-    
-    // Enhanced validation and logging
-    const stageDistribution = segments.reduce((acc, segment) => {
-      acc[segment.stage] = (acc[segment.stage] || 0) + 1
-      return acc
-    }, {} as Record<string, number>)
-    
-    console.log('Final analysis summary:')
-    console.log('- Call Type:', analysis.callType)
-    console.log('- Overall Score:', analysis.overallScore)
-    console.log('- Segments:', segments.length)
-    console.log('- Stage Distribution:', stageDistribution)
-    console.log('- Sales Opportunities:', salesInsights.opportunities.length)
-    console.log('- Sales Successes:', salesInsights.successful.length)
-    console.log('- Missed Opportunities:', salesInsights.missed.length)
-    
-    // Final validation to ensure quality
-    return validateAndSanitizeAnalysis(analysis, transcript)
-    
-  } catch (error) {
-    console.error('Multi-stage analysis failed with error:', error)
-    
-    // Enhanced error reporting for debugging
-    if (error instanceof Error) {
-      console.error('Error details:', {
-        message: error.message,
-        stack: error.stack,
-        transcriptLength: transcript.length,
-        transcriptPreview: transcript.substring(0, 200)
-      })
-    }
-    
-    console.log('Providing enhanced fallback analysis due to AI failure')
-    return createFallbackAnalysis(transcript, error)
+  // Stage 1: Parse and segment the transcript with stage identification
+  console.log('Stage 1: Segmenting transcript and identifying stages...')
+  const segments = await segmentTranscriptWithAI(transcript)
+  console.log(`Stage 1 complete: ${segments.length} segments identified`)
+  
+  // Verify we have segments before proceeding
+  if (!segments || segments.length === 0) {
+    throw new Error('No segments were identified from the transcript')
   }
+  
+  // Stage 2: Analyze compliance for each stage
+  console.log('Stage 2: Analyzing compliance for each stage...')
+  const compliance = await analyzeComplianceWithAI(transcript, segments)
+  console.log('Stage 2 complete: Compliance analysis finished')
+  
+  // Stage 3: Identify sales insights
+  console.log('Stage 3: Analyzing sales opportunities...')
+  const salesInsights = await analyzeSalesInsightsWithAI(transcript, segments)
+  console.log('Stage 3 complete: Sales insights identified')
+  
+  // Stage 4: Generate overall assessment
+  console.log('Stage 4: Generating overall assessment...')
+  const overallAssessment = await generateOverallAssessmentWithAI(transcript, compliance, salesInsights)
+  console.log('Stage 4 complete: Overall assessment generated')
+  
+  const analysis: AnalysisResult = {
+    callType: overallAssessment.callType,
+    overallScore: overallAssessment.score,
+    compliance,
+    salesInsights,
+    transcript: { segments }
+  }
+  
+  // Enhanced validation and logging
+  const stageDistribution = segments.reduce((acc, segment) => {
+    acc[segment.stage] = (acc[segment.stage] || 0) + 1
+    return acc
+  }, {} as Record<string, number>)
+  
+  console.log('Final analysis summary:')
+  console.log('- Call Type:', analysis.callType)
+  console.log('- Overall Score:', analysis.overallScore)
+  console.log('- Segments:', segments.length)
+  console.log('- Stage Distribution:', stageDistribution)
+  console.log('- Sales Opportunities:', salesInsights.opportunities.length)
+  console.log('- Sales Successes:', salesInsights.successful.length)
+  console.log('- Missed Opportunities:', salesInsights.missed.length)
+  
+  // Final validation to ensure quality
+  return validateAndSanitizeAnalysis(analysis, transcript)
 }
 
 // Stage 1: Segment transcript and identify conversation stages
@@ -326,27 +308,16 @@ VALIDATION: Ensure stages are distributed logically across conversation flow. Ea
     const largestStageCount = Math.max(...Object.values(stageCount))
     
     if (emptyStages > 3 || largestStageCount > totalSegments * 0.6) {
-      console.log('AI stage distribution is poor, applying rule-based correction...')
-      
-      // Re-assign stages using rule-based approach
-      const correctedSegments = processedSegments.map((segment, index) => ({
-        ...segment,
-        stage: determineStage(index, segment.text, totalSegments)
-      }))
-      
-      // Apply speaker consistency correction
-      return correctSparkSpeakerAssignments(correctedSegments)
+      console.log('AI stage distribution is poor, rejecting analysis')
+      throw new Error('AI failed to properly distribute conversation stages')
     }
     
-    // Apply speaker consistency correction to good AI results too
-    return correctSparkSpeakerAssignments(processedSegments)
+    return processedSegments
     
   } catch (parseError) {
     console.error('Segmentation JSON parsing failed:', parseError)
     console.error('Response that failed to parse:', response)
-    console.log('Falling back to rule-based segmentation...')
-    return parseTranscriptToSegments(transcript)
-  }
+    throw new Error(`AI segmentation failed: ${parseError instanceof Error ? parseError.message : 'JSON parsing error'}`)
 }
 
 // Stage 2: Analyze compliance for each conversation stage
@@ -427,17 +398,7 @@ Be specific and constructive in your notes.
     return compliance
   } catch (error) {
     console.error('Compliance analysis parsing failed:', error)
-    
-    // Return reasonable defaults
-    return {
-      introduction: { present: true, quality: 'Good', notes: 'Professional introduction observed' },
-      diagnosis: { present: true, quality: 'Good', notes: 'Problem investigation present' },
-      solution: { present: true, quality: 'Good', notes: 'Solution explanation provided' },
-      upsell: { present: true, quality: 'Fair', notes: 'Some additional services mentioned' },
-      maintenance: { present: true, quality: 'Good', notes: 'Maintenance discussion included' },
-      closing: { present: true, quality: 'Good', notes: 'Professional call conclusion' }
-    }
-  }
+    throw new Error(`AI compliance analysis failed: ${error instanceof Error ? error.message : 'Parsing error'}`)
 }
 
 // Stage 3: Analyze sales opportunities and performance
@@ -488,13 +449,7 @@ Focus on:
     }
   } catch (error) {
     console.error('Sales insights parsing failed:', error)
-    
-    return {
-      opportunities: ['Manual review recommended for sales opportunity identification'],
-      successful: ['Basic service delivery completed'],
-      missed: ['Analysis failed - manual review needed']
-    }
-  }
+    throw new Error(`AI sales analysis failed: ${error instanceof Error ? error.message : 'Parsing error'}`)
 }
 
 // Stage 4: Generate overall call assessment and score
@@ -534,12 +489,7 @@ The score should be 0-100 based on overall performance considering compliance an
     }
   } catch (error) {
     console.error('Overall assessment parsing failed:', error)
-    
-    return {
-      callType: 'Service Call',
-      score: 75
-    }
-  }
+    throw new Error(`AI assessment failed: ${error instanceof Error ? error.message : 'Parsing error'}`)
 }
 
 function validateAndSanitizeAnalysis(analysis: any, transcript: string): AnalysisResult {
@@ -575,73 +525,27 @@ function validateAndSanitizeAnalysis(analysis: any, transcript: string): Analysi
   if (!Array.isArray(analysis.salesInsights.successful)) analysis.salesInsights.successful = []
   if (!Array.isArray(analysis.salesInsights.missed)) analysis.salesInsights.missed = []
   
-  // If no segments provided or they're poorly categorized, parse transcript properly
+  // If no segments provided, they must be generated properly by AI
   if (!Array.isArray(analysis.transcript.segments) || analysis.transcript.segments.length === 0) {
-    console.log('No segments in AI response, parsing transcript manually...')
-    analysis.transcript.segments = parseTranscriptToSegments(transcript)
-  } else {
-    // Validate existing segments and ensure proper stage distribution
-    let stageCount = { introduction: 0, diagnosis: 0, solution: 0, upsell: 0, maintenance: 0, closing: 0 }
-    
-    analysis.transcript.segments = analysis.transcript.segments.map((segment: any, index: number) => {
-      const validatedSegment = {
-        speaker: segment.speaker || 'Unknown',
-        timestamp: segment.timestamp || `${Math.floor(index * 15 / 60).toString().padStart(2, '0')}:${(index * 15 % 60).toString().padStart(2, '0')}`,
-        text: segment.text || '',
-        stage: validStages.includes(segment.stage) ? segment.stage : determineStage(index, segment.text || '', analysis.transcript.segments.length)
-      }
-      
-      stageCount[validatedSegment.stage as keyof typeof stageCount]++
-      return validatedSegment
-    })
-    
-    // If AI poorly distributed stages (e.g., everything in one stage), re-categorize
-    const totalSegments = analysis.transcript.segments.length
-    const emptyStages = Object.values(stageCount).filter(count => count === 0).length
-    
-    if (emptyStages > 3 || stageCount.introduction > totalSegments * 0.7) {
-      console.log('AI stage distribution is poor, re-categorizing segments...')
-      analysis.transcript.segments = analysis.transcript.segments.map((segment: any, index: number) => ({
-        ...segment,
-        stage: determineStage(index, segment.text, totalSegments)
-      }))
-    }
+    throw new Error('No segments were provided by AI analysis')
   }
+  
+  // Validate existing segments
+  const validatedSegments = analysis.transcript.segments.map((segment: any, index: number) => {
+    return {
+      speaker: segment.speaker || 'Unknown',
+      timestamp: segment.timestamp || `${Math.floor(index * 15 / 60).toString().padStart(2, '0')}:${(index * 15 % 60).toString().padStart(2, '0')}`,
+      text: segment.text || '',
+      stage: validStages.includes(segment.stage) ? segment.stage : 'introduction'
+    }
+  })
+  
+  analysis.transcript.segments = validatedSegments
   
   return analysis as AnalysisResult
 }
 
-function createFallbackAnalysis(transcript: string, error: any): AnalysisResult {
-  const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
-  
-  return {
-    callType: "Service Call (Manual Analysis)",
-    overallScore: 75,
-    compliance: {
-      introduction: { present: true, quality: "Good", notes: `Basic analysis shows introduction appears present. AI analysis failed: ${errorMessage}` },
-      diagnosis: { present: true, quality: "Good", notes: "Basic analysis suggests diagnosis stage present. Full AI analysis failed - manual review recommended." },
-      solution: { present: true, quality: "Good", notes: "Basic analysis indicates solution explanation provided. AI analysis failed - verify details manually." },
-      upsell: { present: true, quality: "Fair", notes: "Basic analysis shows some upselling attempts. AI analysis failed - verify sales performance manually." },
-      maintenance: { present: true, quality: "Good", notes: "Basic analysis indicates maintenance discussion present. AI analysis failed - manual review needed." },
-      closing: { present: true, quality: "Good", notes: "Basic analysis shows professional closing present. AI analysis failed - verify closing quality manually." }
-    },
-    salesInsights: {
-      opportunities: [
-        "AI analysis failed - manual transcript review needed for opportunity identification",
-        `Error: ${errorMessage}`
-      ],
-      successful: [
-        "Basic service delivery appears completed (AI analysis failed - verify manually)"
-      ],
-      missed: [
-        "AI analysis failed - comprehensive manual review required for missed opportunity assessment"
-      ]
-    },
-    transcript: {
-      segments: parseTranscriptToSegments(transcript)
-    }
-  }
-}
+
 
 // Production transcription hook
 export function useRealTranscription(config: TranscriptionConfig | null) {
@@ -678,286 +582,9 @@ export function useRealTranscription(config: TranscriptionConfig | null) {
   return { transcribeAudio, isTranscribing }
 }
 
-// Mock transcription for demo/testing purposes
-export function useMockTranscription() {
-  const [isTranscribing, setIsTranscribing] = useState(false)
 
-  const transcribeAudio = async (file: File): Promise<string> => {
-    setIsTranscribing(true)
-    
-    try {
-      // Validate file type
-      if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
-        throw new Error('Please upload an audio or video file')
-      }
-      
-      // Check file size (max 50MB for demo)
-      if (file.size > 50 * 1024 * 1024) {
-        throw new Error('Audio file too large (max 50MB)')
-      }
-      
-      console.log(`Processing audio file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`)
-      
-      // Simulate realistic transcription delay based on file size
-      const delay = Math.min(Math.max(file.size / (1024 * 1024) * 1000, 2000), 8000)
-      await new Promise(resolve => setTimeout(resolve, delay))
-      
-      // Return mock transcript - comprehensive service call example with clear stage indicators
-      return `Technician: Good morning! This is Mike from AirFlow Solutions. I'm here about your air conditioning service request. Am I speaking with Mrs. Johnson?
 
-Customer: Yes, that's me. Thank you for coming out so quickly.
 
-Technician: My pleasure, Mrs. Johnson. I understand your AC stopped working completely yesterday evening. Can you tell me what happened right before it stopped working? Any unusual sounds or behaviors?
 
-Customer: Well, it's been making this grinding noise for about a week. Then yesterday it just shut off completely. We've had so many issues with this unit lately. Our energy bills have been through the roof too.
 
-Technician: A grinding noise often indicates a motor bearing issue. Let me check the unit first and run some diagnostics. How old is this system, and when was it last serviced?
 
-Customer: It's about 12 years old. Honestly, we haven't had it serviced in probably 3 years. My husband has allergies and we've noticed the air quality isn't great either.
-
-Technician: I see the problem now. The compressor motor bearing has failed completely, which explains the grinding noise and shutdown. I can replace the bearing and get you back up and running today for $485, which includes labor and the part.
-
-Customer: That sounds reasonable. How long will it take? And is this something that's likely to happen again?
-
-Technician: About 2 hours for the repair. This particular failure isn't common, but I noticed your air filter is completely clogged, which puts extra strain on the system. I also want to mention we have a UV air purifier system that would significantly improve your indoor air quality, especially helpful for your husband's allergies.
-
-Customer: How much would that cost?
-
-Technician: The UV system is $350 installed. It kills bacteria, mold, and allergens right in your ductwork. Many of our customers with allergy sufferers see immediate improvement in their symptoms.
-
-Customer: That's interesting. What about preventing future breakdowns like this?
-
-Technician: Great question! We offer a comprehensive maintenance plan that includes bi-annual check-ups, filter changes, and priority scheduling. The plan is $199 annually, which works out to less than $17 per month, and includes a 15% discount on any repairs.
-
-Customer: Let me think about the UV system, but the maintenance plan sounds like a good idea. Can you just do the repair for now?
-
-Technician: Absolutely. I'll get started on the compressor repair right away. I'll leave you some information about our services to review when you're ready.
-
-Technician: All done! Your system is running perfectly now. I've tested everything and the temperatures are back to normal. I also replaced your air filter as a courtesy since it was completely blocked.
-
-Customer: Wow, it feels much cooler already. Thank you so much! You know what, I think we should sign up for that maintenance plan. This repair scared us.
-
-Technician: That's a great decision! I can set that up right now. I'll also leave you my direct number so you can call me personally if you decide on that UV system later. Here's your invoice and the maintenance agreement.
-
-Customer: Perfect. Do you have any other questions for me?
-
-Technician: No, I think we're all set. Thanks again for the excellent service! You really know what you're doing.
-
-Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for your first tune-up. Have a great day and stay cool!`
-      
-    } catch (error) {
-      console.error('Mock transcription error:', error)
-      throw error
-    } finally {
-      setIsTranscribing(false)
-    }
-  }
-
-  return { transcribeAudio, isTranscribing }
-}
-
-function parseTranscriptToSegments(transcript: string) {
-  const lines = transcript.split('\n').filter(line => line.trim() !== '')
-  const segments = []
-  let timestamp = 0
-  
-  for (const line of lines) {
-    if (line.includes(':')) {
-      const [speaker, ...textParts] = line.split(':')
-      const text = textParts.join(':').trim()
-      
-      if (text) {
-        const minutes = Math.floor(timestamp / 60)
-        const seconds = timestamp % 60
-        
-        segments.push({
-          speaker: speaker.trim(),
-          timestamp: `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`,
-          text: text,
-          stage: determineStage(segments.length, text, lines.length)
-        })
-        
-        // Estimate 4-8 seconds per segment based on text length
-        const wordsInText = text.split(' ').length
-        timestamp += Math.max(3, Math.min(12, Math.floor(wordsInText / 3)))
-      }
-    }
-  }
-  
-  return segments
-}
-
-function determineStage(index: number, text: string, totalLines: number): string {
-  const progress = index / Math.max(totalLines, 1)
-  const lowerText = text.toLowerCase()
-  
-  // Enhanced keyword-based detection with better patterns
-  
-  // Introduction indicators - greetings, names, company introduction
-  if (lowerText.includes('good morning') || lowerText.includes('good afternoon') || 
-      lowerText.includes('hello') || lowerText.includes('this is') || 
-      lowerText.includes('my name is') || lowerText.includes('speaking with') ||
-      lowerText.includes('thank you for') && index < 5) {
-    return 'introduction'
-  }
-  
-  // Diagnosis indicators - problem investigation, questions about issue
-  if (lowerText.includes('problem') || lowerText.includes('issue') || 
-      lowerText.includes('what happened') || lowerText.includes('tell me about') ||
-      lowerText.includes('when did') || lowerText.includes('sounds') || 
-      lowerText.includes('noise') || lowerText.includes('check') || 
-      lowerText.includes('diagnose') || lowerText.includes('how long') ||
-      lowerText.includes('stopped working') || lowerText.includes('not working') ||
-      lowerText.includes('what\'s wrong') || lowerText.includes('can you describe')) {
-    return 'diagnosis'
-  }
-  
-  // Solution indicators - explaining fixes, pricing, technical details
-  if (lowerText.includes('found the problem') || lowerText.includes('i can fix') ||
-      lowerText.includes('replace') || lowerText.includes('repair') ||
-      lowerText.includes('fix') || lowerText.includes('solution') || 
-      lowerText.includes('cost') || lowerText.includes('price') ||
-      lowerText.includes('$') || lowerText.includes('labor') ||
-      lowerText.includes('parts') || lowerText.includes('install') ||
-      lowerText.includes('get you back up')) {
-    return 'solution'
-  }
-  
-  // Upsell indicators - additional services, optional extras
-  if (lowerText.includes('also offer') || lowerText.includes('additional') || 
-      lowerText.includes('upgrade') || lowerText.includes('would you like') ||
-      lowerText.includes('we also have') || lowerText.includes('another option') ||
-      lowerText.includes('air purifier') || lowerText.includes('uv system') ||
-      lowerText.includes('filter') || lowerText.includes('improve') ||
-      lowerText.includes('allergies') || lowerText.includes('air quality')) {
-    return 'upsell'
-  }
-  
-  // Maintenance indicators - service plans, future care
-  if (lowerText.includes('maintenance') || lowerText.includes('plan') || 
-      lowerText.includes('annual') || lowerText.includes('service agreement') || 
-      lowerText.includes('check-up') || lowerText.includes('tune-up') ||
-      lowerText.includes('bi-annual') || lowerText.includes('spring and fall') ||
-      lowerText.includes('discount on repairs') || lowerText.includes('priority') ||
-      lowerText.includes('per month') || lowerText.includes('yearly')) {
-    return 'maintenance'
-  }
-  
-  // Closing indicators - wrap up, thanks, final instructions
-  if (lowerText.includes('all done') || lowerText.includes('you\'re welcome') || 
-      lowerText.includes('thank you') || lowerText.includes('have a great') ||
-      lowerText.includes('goodbye') || lowerText.includes('call if') ||
-      lowerText.includes('any questions') || lowerText.includes('stay cool') ||
-      lowerText.includes('have a good') || lowerText.includes('take care') ||
-      progress > 0.85) {
-    return 'closing'
-  }
-  
-  // Enhanced fallback based on conversation flow
-  // Introduction phase (first 10-15% of conversation)
-  if (progress < 0.12) return 'introduction'
-  
-  // Diagnosis phase (next 25% - understanding the problem)
-  if (progress < 0.35) return 'diagnosis'
-  
-  // Solution phase (next 25% - explaining the fix)  
-  if (progress < 0.55) return 'solution'
-  
-  // Upsell phase (next 15% - additional offerings)
-  if (progress < 0.70) return 'upsell'
-  
-  // Maintenance phase (next 15% - service plans)
-  if (progress < 0.85) return 'maintenance'
-  
-  // Closing phase (final 15%)
-  return 'closing'
-}
-
-function correctSparkSpeakerAssignments(segments: any[]): any[] {
-  if (!segments || segments.length === 0) return segments
-  
-  console.log('Correcting speaker assignments for Spark AI analysis...')
-  
-  // Analyze speaker patterns to fix inconsistencies
-  let technicianSpeaker: string | null = null
-  let customerSpeaker: string | null = null
-  
-  // First pass: identify likely technician based on introduction patterns
-  for (let i = 0; i < Math.min(3, segments.length); i++) {
-    const segment = segments[i]
-    const text = segment.text?.toLowerCase() || ''
-    
-    if ((text.includes('this is') && text.includes('from')) || 
-        text.includes('good morning') || text.includes('good afternoon') ||
-        text.includes('technician') || text.includes('service')) {
-      technicianSpeaker = segment.speaker
-      console.log(`Identified technician speaker: ${technicianSpeaker}`)
-      break
-    }
-  }
-  
-  // Second pass: identify customer based on problem descriptions
-  for (const segment of segments) {
-    const text = segment.text?.toLowerCase() || ''
-    
-    if ((text.includes('my') || text.includes('our')) && 
-        (text.includes('problem') || text.includes('issue') || text.includes('broken'))) {
-      if (segment.speaker !== technicianSpeaker) {
-        customerSpeaker = segment.speaker
-        console.log(`Identified customer speaker: ${customerSpeaker}`)
-        break
-      }
-    }
-  }
-  
-  // If we couldn't identify clearly, use heuristics
-  if (!technicianSpeaker || !customerSpeaker) {
-    const speakerCounts = new Map<string, number>()
-    segments.forEach(seg => {
-      if (seg.speaker) {
-        speakerCounts.set(seg.speaker, (speakerCounts.get(seg.speaker) || 0) + 1)
-      }
-    })
-    
-    const speakers = Array.from(speakerCounts.keys())
-    if (speakers.length >= 2) {
-      if (!technicianSpeaker) technicianSpeaker = speakers[0]
-      if (!customerSpeaker) customerSpeaker = speakers[1]
-    }
-  }
-  
-  console.log('Final speaker identification:', { technicianSpeaker, customerSpeaker })
-  
-  // Third pass: correct speaker assignments based on content
-  return segments.map(segment => {
-    const text = segment.text?.toLowerCase() || ''
-    let correctedSpeaker = segment.speaker
-    
-    // Strong technician indicators
-    if (text.includes('let me') || text.includes('i can') || text.includes('we offer') ||
-        text.includes('system') || text.includes('repair') || text.includes('fix') ||
-        text.includes('install') || text.includes('maintenance plan') ||
-        text.includes('diagnosed') || text.includes('check') ||
-        text.includes('all done') || text.includes('you\'re welcome')) {
-      correctedSpeaker = technicianSpeaker || 'Technician'
-    }
-    // Strong customer indicators  
-    else if ((text.includes('how much') || text.includes('cost') || text.includes('price')) ||
-             (text.includes('thank you') || text.includes('sounds good')) ||
-             (text.includes('my') && (text.includes('problem') || text.includes('issue'))) ||
-             (text.includes('allergies') || text.includes('bills')) ||
-             (text.includes('yes') || text.includes('okay') || text.includes('sure'))) {
-      correctedSpeaker = customerSpeaker || 'Customer'
-    }
-    
-    // If speaker changed, log it for debugging
-    if (correctedSpeaker !== segment.speaker) {
-      console.log(`Corrected speaker: "${segment.speaker}" -> "${correctedSpeaker}" for text: "${segment.text.substring(0, 50)}..."`)
-    }
-    
-    return {
-      ...segment,
-      speaker: correctedSpeaker
-    }
-  })
-}

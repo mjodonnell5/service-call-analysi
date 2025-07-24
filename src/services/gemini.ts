@@ -328,20 +328,13 @@ Requirements:
           stage: requiredStages.includes(s.stage) ? s.stage : this.determineStageFromText(index, s.text, result.segments.length)
         }))
     } else {
-      // Fallback to parsing transcript
-      console.log('No valid segments from Gemini, parsing transcript manually...')
-      validated.segmentedTranscript = this.parseTranscriptToSegments(transcript)
+      // No valid segments - this is an analysis failure
+      throw new Error('Gemini AI failed to generate valid transcript segments')
     }
     
     // Ensure we have some segments
     if (validated.segmentedTranscript.length === 0) {
-      console.log('Still no segments, creating basic fallback...')
-      validated.segmentedTranscript = [{
-        speaker: 'System',
-        text: 'Transcript analysis failed - manual review required',
-        timestamp: '00:00',
-        stage: 'introduction'
-      }]
+      throw new Error('Gemini AI analysis produced no usable segments')
     }
     
     console.log('Validation complete')

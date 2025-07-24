@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { useKV } from '@github/spark/hooks'
 import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendingUp, Clock, Microphone, AlertTriangle, Bug } from '@phosphor-icons/react'
-import { analyzeServiceCall, analyzeServiceCallWithGemini, analyzeServiceCallWithOpenAI, useRealTranscription, useMockTranscription } from '@/components/CallAnalyzer'
+import { analyzeServiceCall, analyzeServiceCallWithGemini, analyzeServiceCallWithOpenAI, useRealTranscription } from '@/components/CallAnalyzer'
 import { InsightsPanel } from '@/components/InsightsPanel'
 import { DebugPanel } from '@/components/DebugPanel'
 import { TranscriptionConfig } from '@/services/transcription'
@@ -54,12 +54,8 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<string | null>(null)
   
-  // Use real transcription if configured, fallback to mock
-  const { transcribeAudio: realTranscribe, isTranscribing: isRealTranscribing } = useRealTranscription(transcriptionConfig)
-  const { transcribeAudio: mockTranscribe, isTranscribing: isMockTranscribing } = useMockTranscription()
-  
-  const isTranscribing = transcriptionConfig ? isRealTranscribing : isMockTranscribing
-  const transcribeAudio = transcriptionConfig ? realTranscribe : mockTranscribe
+  // Only use real transcription - no fake data
+  const { transcribeAudio, isTranscribing } = useRealTranscription(transcriptionConfig)
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -666,106 +662,9 @@ function App() {
                       </Alert>
 
                       <div className="mt-4 pt-4 border-t border-border">
-                        <p className="text-xs text-muted-foreground mb-2">For testing purposes:</p>
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          onClick={async () => {
-                            setError(null)
-                            setDebugInfo(null)
-                            setIsAnalyzing(true)
-                            setCurrentStep('Stage 1: Parsing test transcript...')
-                            
-                            try {
-                              const testTranscript = `Technician: Good morning! This is Mike from AirFlow Solutions. I'm here about your air conditioning service request. Am I speaking with Mrs. Johnson?
+                        <p className="text-xs text-muted-foreground mb-2">Note: Upload a real audio file to test the complete analysis pipeline. All AI analysis is live - no demo data.</p>
+                      </div>
 
-Customer: Yes, that's me. Thank you for coming out so quickly.
-
-Technician: My pleasure, Mrs. Johnson. I understand your AC stopped working completely yesterday evening. Can you tell me what happened right before it stopped working? Any unusual sounds or behaviors?
-
-Customer: Well, it's been making this grinding noise for about a week. Then yesterday it just shut off completely. We've had so many issues with this unit lately. Our energy bills have been through the roof too.
-
-Technician: A grinding noise often indicates a motor bearing issue. Let me check the unit first and run some diagnostics. How old is this system, and when was it last serviced?
-
-Customer: It's about 12 years old. Honestly, we haven't had it serviced in probably 3 years. My husband has allergies and we've noticed the air quality isn't great either.
-
-Technician: I see the problem now. The compressor motor bearing has failed completely, which explains the grinding noise and shutdown. I can replace the bearing and get you back up and running today for $485, which includes labor and the part.
-
-Customer: That sounds reasonable. How long will it take? And is this something that's likely to happen again?
-
-Technician: About 2 hours for the repair. This particular failure isn't common, but I noticed your air filter is completely clogged, which puts extra strain on the system. I also want to mention we have a UV air purifier system that would significantly improve your indoor air quality, especially helpful for your husband's allergies.
-
-Customer: How much would that cost?
-
-Technician: The UV system is $350 installed. It kills bacteria, mold, and allergens right in your ductwork. Many of our customers with allergy sufferers see immediate improvement in their symptoms.
-
-Customer: That's interesting. What about preventing future breakdowns like this?
-
-Technician: Great question! We offer a comprehensive maintenance plan that includes bi-annual check-ups, filter changes, and priority scheduling. The plan is $199 annually, which works out to less than $17 per month, and includes a 15% discount on any repairs.
-
-Customer: Let me think about the UV system, but the maintenance plan sounds like a good idea. Can you just do the repair for now?
-
-Technician: Absolutely. I'll get started on the compressor repair right away. I'll leave you some information about our services to review when you're ready.
-
-Technician: All done! Your system is running perfectly now. I've tested everything and the temperatures are back to normal. I also replaced your air filter as a courtesy since it was completely blocked.
-
-Customer: Wow, it feels much cooler already. Thank you so much! You know what, I think we should sign up for that maintenance plan. This repair scared us.
-
-Technician: That's a great decision! I can set that up right now. I'll also leave you my direct number so you can call me personally if you decide on that UV system later. Here's your invoice and the maintenance agreement.
-
-Customer: Perfect. Thank you for the excellent service! You really know what you're doing.
-
-Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for your first tune-up. Have a great day and stay cool!`
-                              
-                              // Store the test transcript for debugging
-                              setOriginalTranscript(testTranscript)
-                              
-                              let analysisResult
-                              if (aiProvider === 'openai' && openaiApiKey) {
-                                setCurrentStep('Test analysis: Using OpenAI GPT-3.5-Turbo (fast mode)...')
-                                console.log('Using OpenAI fast mode for test analysis...')
-                                analysisResult = await analyzeServiceCallWithOpenAI(testTranscript, openaiApiKey)
-                                console.log('OpenAI fast test analysis completed successfully')
-                              } else if (aiProvider === 'gemini' && geminiApiKey) {
-                                setCurrentStep('Test analysis: Using Gemini AI...')
-                                console.log('Using Gemini AI for test analysis...')
-                                analysisResult = await analyzeServiceCallWithGemini(testTranscript, geminiApiKey)
-                                console.log('Gemini test analysis completed successfully')
-                              } else {
-                                setCurrentStep('Test analysis: Using Spark AI...')
-                                console.log('Using Spark AI for test analysis...')
-                                analysisResult = await analyzeServiceCall(testTranscript)
-                              }
-                              
-                              setAnalysis(analysisResult)
-                              setCurrentStep('')
-                            } catch (err) {
-                              console.error('Test analysis error:', err)
-                              const errorMessage = err instanceof Error ? err.message : 'Test analysis failed'
-                              setError(`Test Analysis Error: ${errorMessage}`)
-                              
-                              let debugDetails = ''
-                              if (err instanceof Error) {
-                                debugDetails = `Error: ${err.message}\n\nStack Trace:\n${err.stack || 'No stack trace available'}`
-                                
-                                if (err.message.includes('Invalid Gemini API key')) {
-                                  debugDetails += '\n\nSUGGESTION: API key validation failed. Use the "Test" button first.'
-                                } else if (err.message.includes('quota')) {
-                                  debugDetails += '\n\nSUGGESTION: Check your Gemini API quota at https://aistudio.google.com/'
-                                }
-                              } else {
-                                debugDetails = 'Unknown error type'
-                              }
-                              
-                              setDebugInfo(debugDetails)
-                            } finally {
-                              setIsAnalyzing(false)
-                            }
-                          }}
-                          className="w-full"
-                        >
-                          Test AI Analysis (Demo)
-                        </Button>
                       </div>
                     </div>
                   )}

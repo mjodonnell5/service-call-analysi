@@ -365,70 +365,14 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
       
       // Step 1: Fast segmentation
       console.log('Step 1: Fast transcript segmentation...')
-      let segments
-      
-      try {
-        segments = await this.segmentTranscript(transcript)
-        console.log(`Segmented into ${segments.length} parts`)
-      } catch (segmentError) {
-        console.error('Fast segmentation failed, using fallback:', segmentError)
-        
-        // Quick fallback segmentation
-        const lines = transcript.split('\n').filter(line => line.trim())
-        segments = lines.map((line, index) => {
-          const timeMinutes = Math.floor(index * 0.5)
-          const timeSeconds = (index * 30) % 60
-          const timestamp = `${timeMinutes.toString().padStart(2, '0')}:${timeSeconds.toString().padStart(2, '0')}`
-          
-          const speaker = line.toLowerCase().includes('technician') || line.toLowerCase().includes('mike') 
-            ? 'Technician' : 'Customer'
-          
-          let stage = 'diagnosis'
-          if (index < 2) stage = 'introduction'
-          else if (line.toLowerCase().includes('fix') || line.toLowerCase().includes('repair')) stage = 'solution'
-          else if (line.toLowerCase().includes('upsell') || line.toLowerCase().includes('additional')) stage = 'upsell'
-          else if (line.toLowerCase().includes('maintenance') || line.toLowerCase().includes('plan')) stage = 'maintenance'
-          else if (index > lines.length - 3) stage = 'closing'
-          
-          return { speaker, timestamp, text: line.trim(), stage }
-        })
-      }
+      const segments = await this.segmentTranscript(transcript)
+      console.log(`Segmented into ${segments.length} parts`)
 
       // Step 2: Combined fast analysis
       console.log('Step 2: Combined compliance and sales analysis...')
-      let compliance, salesInsights
-      
-      try {
-        const combined = await this.analyzeCombined(segments)
-        compliance = combined.compliance
-        salesInsights = combined.salesInsights
-      } catch (combinedError) {
-        console.error('Combined analysis failed, using individual analysis:', combinedError)
-        
-        // Fallback to individual analysis
-        try {
-          compliance = await this.analyzeCompliance(segments)
-        } catch {
-          compliance = {
-            introduction: { present: segments.some(s => s.stage === 'introduction'), quality: 'Fair', notes: 'Analysis fallback' },
-            diagnosis: { present: segments.some(s => s.stage === 'diagnosis'), quality: 'Fair', notes: 'Analysis fallback' },
-            solution: { present: segments.some(s => s.stage === 'solution'), quality: 'Fair', notes: 'Analysis fallback' },
-            upsell: { present: segments.some(s => s.stage === 'upsell'), quality: 'Fair', notes: 'Analysis fallback' },
-            maintenance: { present: segments.some(s => s.stage === 'maintenance'), quality: 'Fair', notes: 'Analysis fallback' },
-            closing: { present: segments.some(s => s.stage === 'closing'), quality: 'Fair', notes: 'Analysis fallback' }
-          }
-        }
-        
-        try {
-          salesInsights = await this.analyzeSalesInsights(segments)
-        } catch {
-          salesInsights = {
-            opportunities: ['Analysis error - using fallback'],
-            successful: ['Analysis error - using fallback'],
-            missed: ['Analysis error - using fallback']
-          }
-        }
-      }
+      const combined = await this.analyzeCombined(segments)
+      const compliance = combined.compliance
+      const salesInsights = combined.salesInsights
 
       // Fast scoring
       const complianceScores = Object.values(compliance).map(stage => {

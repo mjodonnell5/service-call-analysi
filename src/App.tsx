@@ -354,7 +354,7 @@ function App() {
                                           } else if (err instanceof Error && err.message.includes('quota')) {
                                             setDebugInfo('Your OpenAI API quota may be exceeded. Check your OpenAI billing and usage.')
                                           } else if (err instanceof Error && err.message.includes('403')) {
-                                            setDebugInfo('API key may not have proper permissions. Ensure you\\'re using a valid OpenAI API key.')
+                                            setDebugInfo('API key may not have proper permissions. Ensure you\'re using a valid OpenAI API key.')
                                           }
                                         }
                                       }}

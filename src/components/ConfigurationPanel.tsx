@@ -14,7 +14,7 @@ import {
   getApiKeyInstructions,
   transcriptionService 
 } from '@/services/transcription'
-import { Key, CheckCircle, AlertTriangle, Info, Eye, EyeSlash } from '@phosphor-icons/react'
+import { Key, CheckCircle, Warning, Info, Eye, EyeSlash } from '@phosphor-icons/react'
 
 interface ConfigurationPanelProps {
   onConfigured: (config: TranscriptionConfig) => void
@@ -147,7 +147,7 @@ export function ConfigurationPanel({ onConfigured }: ConfigurationPanelProps) {
 
         {errors.length > 0 && (
           <Alert className="border-destructive">
-            <AlertTriangle className="h-4 w-4" />
+            <Warning className="h-4 w-4" />
             <AlertDescription>
               <ul className="list-disc list-inside space-y-1">
                 {errors.map((error, index) => (

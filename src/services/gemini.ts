@@ -347,7 +347,12 @@ Requirements:
 
   private parseTranscriptToSegments(transcript: string) {
     const lines = transcript.split('\n').filter(line => line.trim() !== '')
-    const segments = []
+    const segments: Array<{
+      speaker: string
+      text: string
+      timestamp: string
+      stage: string
+    }> = []
     let timestamp = 15 // Start at 15 seconds
     
     for (const line of lines) {

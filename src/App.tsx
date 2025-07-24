@@ -7,7 +7,7 @@ import { Progress } from '@/components/ui/progress'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { useKV } from '@github/spark/hooks'
-import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendingUp, Clock, Microphone, AlertTriangle, Bug } from '@phosphor-icons/react'
+import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendUp, Clock, Microphone, Warning, Bug } from '@phosphor-icons/react'
 import { analyzeServiceCall, analyzeServiceCallWithGemini, analyzeServiceCallWithOpenAI, useRealTranscription } from '@/components/CallAnalyzer'
 import { InsightsPanel } from '@/components/InsightsPanel'
 import { DebugPanel } from '@/components/DebugPanel'
@@ -55,7 +55,7 @@ function App() {
   const [debugInfo, setDebugInfo] = useState<string | null>(null)
   
   // Only use real transcription - no fake data
-  const { transcribeAudio, isTranscribing } = useRealTranscription(transcriptionConfig)
+  const { transcribeAudio, isTranscribing } = useRealTranscription(transcriptionConfig || null)
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -220,7 +220,7 @@ function App() {
                     <div className="space-y-4">
                       {error && (
                         <Alert className="border-destructive">
-                          <AlertTriangle className="h-4 w-4" />
+                          <Warning className="h-4 w-4" />
                           <AlertDescription>
                             <div className="space-y-2">
                               <p>{error}</p>
@@ -753,7 +753,7 @@ function App() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <TrendingUp size={20} />
+                <TrendUp size={20} />
                 Sales Summary
               </CardTitle>
             </CardHeader>

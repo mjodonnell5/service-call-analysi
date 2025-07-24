@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { CheckCircle, XCircle, TrendingUp, AlertTriangle, Lightbulb } from '@phosphor-icons/react'
+import { CheckCircle, XCircle, TrendUp, Warning, Lightbulb } from '@phosphor-icons/react'
 
 interface InsightsPanelProps {
   analysis: {
@@ -18,7 +18,12 @@ interface InsightsPanelProps {
 
 export function InsightsPanel({ analysis }: InsightsPanelProps) {
   const getRecommendations = () => {
-    const recommendations = []
+    const recommendations: Array<{
+      type: string
+      priority: string
+      message: string
+      stage: string
+    }> = []
     
     // Compliance recommendations
     Object.entries(analysis.compliance).forEach(([stage, data]) => {
@@ -81,7 +86,7 @@ export function InsightsPanel({ analysis }: InsightsPanelProps) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <TrendingUp size={20} />
+            <TrendUp size={20} />
             Performance Summary
           </CardTitle>
         </CardHeader>
@@ -104,7 +109,7 @@ export function InsightsPanel({ analysis }: InsightsPanelProps) {
               <span>{Object.values(analysis.compliance).filter(c => c.present).length}/6 Stages Completed</span>
             </div>
             <div className="flex items-center gap-2">
-              <TrendingUp size={16} className="text-accent" />
+              <TrendUp size={16} className="text-accent" />
               <span>{analysis.salesInsights.opportunities.length} Sales Opportunities</span>
             </div>
             <div className="flex items-center gap-2">
@@ -136,8 +141,8 @@ export function InsightsPanel({ analysis }: InsightsPanelProps) {
                 'border-blue-500/20 bg-blue-50'
               }>
                 <div className="flex items-start gap-2">
-                  {rec.priority === 'high' && <AlertTriangle className="h-4 w-4 text-destructive mt-0.5" />}
-                  {rec.priority === 'medium' && <TrendingUp className="h-4 w-4 text-yellow-600 mt-0.5" />}
+                  {rec.priority === 'high' && <Warning className="h-4 w-4 text-destructive mt-0.5" />}
+                  {rec.priority === 'medium' && <TrendUp className="h-4 w-4 text-yellow-600 mt-0.5" />}
                   {rec.priority === 'low' && <Lightbulb className="h-4 w-4 text-blue-600 mt-0.5" />}
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">

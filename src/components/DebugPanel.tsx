@@ -198,8 +198,8 @@ export function DebugPanel({ analysis, transcript }: DebugPanelProps) {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 text-sm">
-                  <p><strong>Total Distribution:</strong> {Object.values(stageDistribution).reduce((sum: number, count: any) => sum + count, 0)} segments</p>
-                  <p><strong>Most Common Stage:</strong> {Object.entries(stageDistribution).sort(([,a]: any, [,b]: any) => b - a)[0]?.[0] || 'None'}</p>
+                  <p><strong>Total Distribution:</strong> {String(Object.values(stageDistribution).reduce((sum: number, count: unknown) => sum + (typeof count === 'number' ? count : 0), 0))} segments</p>
+                  <p><strong>Most Common Stage:</strong> {String(Object.entries(stageDistribution).sort(([,a]: any, [,b]: any) => b - a)[0]?.[0] || 'None')}</p>
                   <p><strong>Distribution Quality:</strong> 
                     <Badge className="ml-2" variant={
                       emptyStages.length > 3 ? "destructive" : 

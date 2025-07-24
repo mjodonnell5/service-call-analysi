@@ -85,15 +85,8 @@ function App() {
       if (useGeminiAnalysis && geminiApiKey) {
         setCurrentStep('Analyzing with Gemini AI (enhanced stage categorization)...')
         console.log('Using Gemini AI for enhanced analysis...')
-        try {
-          analysisResult = await analyzeServiceCallWithGemini(transcript, geminiApiKey)
-          console.log('Gemini analysis completed successfully')
-        } catch (geminiError) {
-          console.error('Gemini analysis failed, falling back to Spark AI:', geminiError)
-          setCurrentStep('Gemini failed, falling back to Spark AI...')
-          // Gemini function already handles fallback internally
-          throw geminiError
-        }
+        analysisResult = await analyzeServiceCallWithGemini(transcript, geminiApiKey)
+        console.log('Gemini analysis completed successfully')
       } else {
         setCurrentStep('Analyzing with Spark AI...')
         console.log('Using Spark AI for analysis...')
@@ -340,15 +333,8 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
                               if (useGeminiAnalysis && geminiApiKey) {
                                 setCurrentStep('Test analysis: Using Gemini AI...')
                                 console.log('Using Gemini AI for test analysis...')
-                                try {
-                                  analysisResult = await analyzeServiceCallWithGemini(testTranscript, geminiApiKey)
-                                  console.log('Gemini test analysis completed successfully')
-                                } catch (geminiError) {
-                                  console.error('Gemini test analysis failed, using results from fallback:', geminiError)
-                                  setCurrentStep('Gemini failed, analysis completed with fallback...')
-                                  // The Gemini function handles fallback internally, so we still get a result
-                                  throw geminiError
-                                }
+                                analysisResult = await analyzeServiceCallWithGemini(testTranscript, geminiApiKey)
+                                console.log('Gemini test analysis completed successfully')
                               } else {
                                 setCurrentStep('Test analysis: Using Spark AI...')
                                 console.log('Using Spark AI for test analysis...')
@@ -407,6 +393,11 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
                 <ChartBar size={20} />
                 Call Overview
               </CardTitle>
+              <div className="flex items-center gap-2">
+                <Badge variant={useGeminiAnalysis && geminiApiKey ? "default" : "secondary"}>
+                  {useGeminiAnalysis && geminiApiKey ? 'Gemini AI Analysis' : 'Spark AI Analysis'}
+                </Badge>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>

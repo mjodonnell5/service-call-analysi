@@ -65,7 +65,7 @@ export class GeminiAnalyzer {
           temperature: 0.1,
           topK: 1,
           topP: 0.95,
-          maxOutputTokens: 1500, // Reduced to prevent oversized/malformed responses
+          maxOutputTokens: 2000, // Increased for complete responses
         },
         safetySettings: [
           {
@@ -127,149 +127,93 @@ export class GeminiAnalyzer {
 
   async analyzeServiceCall(transcript: string): Promise<GeminiAnalysisResult> {
     try {
-      // Step 1: Segment and categorize the transcript
-      const segmentationPrompt = `
-Analyze this service call transcript and return structured JSON only.
+      console.log('Starting single-step Gemini analysis...')
+      
+      // Single comprehensive analysis prompt
+      const analysisPrompt = `
+You are an expert service call analyzer. Analyze this transcript and return ONLY valid JSON.
 
 TRANSCRIPT:
 ${transcript}
 
-Return this exact JSON structure (no markdown, no explanations):
+Return this EXACT JSON structure with NO markdown formatting:
 {
-  "segments": [
-    {"speaker": "Technician", "text": "exact quote from transcript", "timestamp": "MM:SS", "stage": "introduction"},
-    {"speaker": "Customer", "text": "exact quote from transcript", "timestamp": "MM:SS", "stage": "diagnosis"}
-  ],
-  "callType": "descriptive call type"
-}
-
-STAGE RULES - assign each segment to exactly one:
-- introduction: greetings, names, company intro
-- diagnosis: problem questions, issue investigation  
-- solution: repair explanation, pricing, technical details
-- upsell: additional services, optional products
-- maintenance: service plans, agreements, preventive care
-- closing: thanks, wrap-up, final arrangements
-
-Use sequential timestamps starting at 00:15, adding 15-45 seconds per segment.
-`
-
-      console.log('Step 1: Segmenting transcript with Gemini...')
-      const segmentationResponse = await this.callGemini(segmentationPrompt)
-      
-      let segmentationData
-      try {
-        segmentationData = this.robustJSONParse(segmentationResponse, 'segmentation')
-        
-        // Validate segmentation result
-        if (!segmentationData.segments || !Array.isArray(segmentationData.segments)) {
-          throw new Error('Invalid segments array in response')
-        }
-        
-        if (segmentationData.segments.length === 0) {
-          throw new Error('No segments found in response')
-        }
-        
-        console.log(`Successfully parsed ${segmentationData.segments.length} segments`)
-      } catch (error) {
-        console.error('Failed to parse Gemini segmentation response:', error)
-        console.error('Segmentation response preview:', segmentationResponse.substring(0, 1000))
-        // Use fallback segmentation
-        segmentationData = this.createFallbackSegmentation(transcript)
-      }
-
-      // Step 2: Analyze each stage for compliance and quality
-      const analysisPrompt = `
-Analyze this segmented service call for compliance and sales performance.
-
-SEGMENTS BY STAGE:
-${segmentationData.segments.map((s: any) => `[${s.stage}] ${s.speaker}: ${s.text}`).join('\n')}
-
-Return this exact JSON structure (no markdown, no explanations):
-{
+  "callType": "HVAC Repair Service Call",
   "overallScore": 85,
+  "segments": [
+    {"speaker": "Technician", "text": "Good morning! This is Mike from AirFlow Solutions.", "timestamp": "00:15", "stage": "introduction"},
+    {"speaker": "Customer", "text": "Yes, that's me. Thank you for coming out so quickly.", "timestamp": "00:30", "stage": "introduction"}
+  ],
   "stages": [
-    {"stage": "introduction", "quality": "Good", "notes": "specific analysis notes"},
-    {"stage": "diagnosis", "quality": "Excellent", "notes": "specific analysis notes"},
-    {"stage": "solution", "quality": "Good", "notes": "specific analysis notes"},
-    {"stage": "upsell", "quality": "Fair", "notes": "specific analysis notes"},
-    {"stage": "maintenance", "quality": "Good", "notes": "specific analysis notes"},
-    {"stage": "closing", "quality": "Good", "notes": "specific analysis notes"}
+    {"stage": "introduction", "quality": "Good", "notes": "Professional greeting and company introduction"},
+    {"stage": "diagnosis", "quality": "Excellent", "notes": "Thorough problem investigation with good questioning"},
+    {"stage": "solution", "quality": "Good", "notes": "Clear repair explanation with upfront pricing"},
+    {"stage": "upsell", "quality": "Good", "notes": "Relevant additional services offered"},
+    {"stage": "maintenance", "quality": "Excellent", "notes": "Maintenance plan clearly explained with benefits"},
+    {"stage": "closing", "quality": "Good", "notes": "Professional wrap-up with follow-up contact info"}
   ],
   "salesInsights": {
-    "opportunities": ["specific opportunity 1", "specific opportunity 2"],
-    "successful": ["specific success 1", "specific success 2"],
-    "missed": ["specific missed opportunity 1"]
+    "opportunities": ["Customer mentioned allergies - good opportunity for air purification", "High energy bills indicate efficiency upgrade potential"],
+    "successful": ["Successfully offered maintenance plan with clear benefits", "Provided competitive repair pricing"],
+    "missed": ["Could have emphasized long-term savings more", "Didn't ask about other HVAC units"]
   }
 }
 
-Quality must be exactly: "Poor", "Fair", "Good", or "Excellent".
-OverallScore must be a number between 0-100.
+REQUIREMENTS:
+- Parse EVERY speaker statement into segments
+- Assign stages: introduction, diagnosis, solution, upsell, maintenance, closing
+- Quality options: Poor, Fair, Good, Excellent
+- Include ALL 6 stages even if some are missing from call
+- Use sequential timestamps (00:15, 00:30, 00:45, etc.)
+- Overall score 0-100 based on compliance and sales performance
 `
 
-      console.log('Step 2: Analyzing compliance and sales with Gemini...')
-      const analysisResponse = await this.callGemini(analysisPrompt)
+      const response = await this.callGemini(analysisPrompt)
+      console.log('Gemini response received, parsing...')
       
-      let analysisData
+      // Simple, robust JSON parsing
+      let result
       try {
-        analysisData = this.robustJSONParse(analysisResponse, 'analysis')
+        // Clean the response
+        let cleanResponse = response.trim()
         
-        // Validate analysis result
-        if (typeof analysisData.overallScore !== 'number') {
-          analysisData.overallScore = 75
-        }
+        // Remove any markdown formatting
+        cleanResponse = cleanResponse.replace(/```json\s*/gi, '').replace(/```\s*/g, '')
+        cleanResponse = cleanResponse.replace(/^.*?({[\s\S]*}).*$/s, '$1')
         
-        if (!Array.isArray(analysisData.stages)) {
-          throw new Error('Invalid stages array in analysis response')
-        }
+        // Parse the JSON
+        result = JSON.parse(cleanResponse)
+        console.log('Successfully parsed Gemini response')
         
-        // Ensure all required stages are present
-        const requiredStages = ['introduction', 'diagnosis', 'solution', 'upsell', 'maintenance', 'closing']
-        for (const stage of requiredStages) {
-          if (!analysisData.stages.find((s: any) => s.stage === stage)) {
-            analysisData.stages.push({
-              stage,
-              quality: 'Fair',
-              notes: `Stage analysis not provided by Gemini`
-            })
-          }
-        }
-        
-        if (!analysisData.salesInsights) {
-          analysisData.salesInsights = { opportunities: [], successful: [], missed: [] }
-        }
-        
-        console.log('Analysis data validated successfully')
-      } catch (error) {
-        console.error('Failed to parse Gemini analysis response:', error)
-        console.error('Analysis response preview:', analysisResponse.substring(0, 1000))
-        // Use fallback analysis
-        analysisData = this.createFallbackAnalysis(segmentationData.segments)
+      } catch (parseError) {
+        console.error('JSON parsing failed:', parseError)
+        console.error('Response that failed:', response.substring(0, 2000))
+        throw new Error(`Failed to parse Gemini response: ${parseError}`)
       }
-
-      // Combine the results
-      return {
-        callType: segmentationData.callType || 'Service Call (Gemini Analysis)',
-        overallScore: analysisData.overallScore,
-        stages: analysisData.stages,
-        salesInsights: analysisData.salesInsights,
-        segmentedTranscript: segmentationData.segments
-      }
+      
+      // Validate and fix the result structure
+      const validated = this.validateGeminiResult(result, transcript)
+      
+      console.log('Gemini analysis completed successfully')
+      console.log('- Call Type:', validated.callType)
+      console.log('- Segments:', validated.segmentedTranscript.length)
+      console.log('- Overall Score:', validated.overallScore)
+      
+      return validated
+      
     } catch (error) {
       console.error('Gemini analysis failed:', error)
       
-      // Provide more specific error information
       let errorMessage = 'Unknown error'
       if (error instanceof Error) {
         errorMessage = error.message
         
-        // Add context for common errors
-        if (errorMessage.includes('JSON')) {
-          errorMessage += '. Gemini returned malformed JSON response.'
+        if (errorMessage.includes('JSON') || errorMessage.includes('parse')) {
+          errorMessage = 'Failed to parse Gemini response: Invalid JSON format'
         } else if (errorMessage.includes('API error')) {
-          errorMessage += '. Check your Gemini API key and quota.'
+          errorMessage = 'Gemini API error: Check your API key and quota'
         } else if (errorMessage.includes('safety')) {
-          errorMessage += '. Content blocked by Gemini safety filters.'
+          errorMessage = 'Content blocked by Gemini safety filters'
         }
       }
       
@@ -277,221 +221,64 @@ OverallScore must be a number between 0-100.
     }
   }
 
-  private robustJSONParse(response: string, type: 'segmentation' | 'analysis'): any {
-    console.log(`Attempting to parse ${type} response...`)
-    console.log('Response length:', response.length)
-    console.log('Response preview:', response.substring(0, 500))
-
-    // Method 1: Try direct JSON parse first
-    try {
-      const parsed = JSON.parse(response.trim())
-      console.log(`Method 1 (direct parse) succeeded for ${type}`)
-      return parsed
-    } catch (e) {
-      console.log(`Method 1 failed: ${e}`)
-    }
-
-    // Method 2: Clean and extract JSON more aggressively
-    try {
-      let cleanResponse = response.trim()
-      
-      // Remove markdown code blocks and common prefixes
-      cleanResponse = cleanResponse.replace(/```json\s*/gi, '').replace(/```\s*/g, '')
-      cleanResponse = cleanResponse.replace(/^JSON RESPONSE:\s*/gi, '')
-      cleanResponse = cleanResponse.replace(/^Here's the JSON response:\s*/gi, '')
-      cleanResponse = cleanResponse.replace(/^Response:\s*/gi, '')
-      
-      // Find JSON boundaries more reliably
-      const openBrace = cleanResponse.indexOf('{')
-      const openBracket = cleanResponse.indexOf('[')
-      let jsonStart = -1
-      let jsonEnd = -1
-      
-      if (openBrace >= 0 && (openBracket < 0 || openBrace < openBracket)) {
-        jsonStart = openBrace
-        // Find matching closing brace
-        let braceCount = 0
-        let inString = false
-        let escaped = false
-        
-        for (let i = jsonStart; i < cleanResponse.length; i++) {
-          const char = cleanResponse[i]
-          
-          if (char === '\\' && !escaped) {
-            escaped = true
-            continue
-          }
-          
-          if (char === '"' && !escaped) {
-            inString = !inString
-          }
-          
-          if (!inString) {
-            if (char === '{') braceCount++
-            else if (char === '}') {
-              braceCount--
-              if (braceCount === 0) {
-                jsonEnd = i + 1
-                break
-              }
-            }
-          }
-          
-          escaped = false
-        }
-      } else if (openBracket >= 0) {
-        jsonStart = openBracket
-        // Find matching closing bracket
-        let bracketCount = 0
-        let inString = false
-        let escaped = false
-        
-        for (let i = jsonStart; i < cleanResponse.length; i++) {
-          const char = cleanResponse[i]
-          
-          if (char === '\\' && !escaped) {
-            escaped = true
-            continue
-          }
-          
-          if (char === '"' && !escaped) {
-            inString = !inString
-          }
-          
-          if (!inString) {
-            if (char === '[') bracketCount++
-            else if (char === ']') {
-              bracketCount--
-              if (bracketCount === 0) {
-                jsonEnd = i + 1
-                break
-              }
-            }
-          }
-          
-          escaped = false
-        }
-      }
-      
-      if (jsonStart >= 0 && jsonEnd > jsonStart) {
-        cleanResponse = cleanResponse.substring(jsonStart, jsonEnd)
-        
-        // Additional cleaning for common issues
-        cleanResponse = cleanResponse
-          .replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
-          .replace(/\n/g, ' ')           // Replace newlines with spaces
-          .replace(/\t/g, ' ')           // Replace tabs with spaces
-          .replace(/\s{2,}/g, ' ')       // Collapse multiple spaces
-          .replace(/,\s*,/g, ',')        // Remove duplicate commas
-        
-        const parsed = JSON.parse(cleanResponse)
-        console.log(`Method 2 (boundary extraction) succeeded for ${type}`)
-        return parsed
-      }
-    } catch (e) {
-      console.log(`Method 2 failed: ${e}`)
-    }
-
-    // Method 3: Regex-based extraction with repair
-    try {
-      const jsonPattern = /\{[\s\S]*?\}|\[[\s\S]*?\]/g
-      const matches = response.match(jsonPattern)
-      
-      if (matches && matches.length > 0) {
-        // Try each match until one parses successfully
-        for (const match of matches) {
-          try {
-            let fixedMatch = match
-              .replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
-              .replace(/\n/g, ' ')           // Replace newlines
-              .replace(/\t/g, ' ')           // Replace tabs
-              .replace(/\s{2,}/g, ' ')       // Collapse spaces
-              .replace(/([{,]\s*)"([^"]*)"(\s*:\s*)([^",}\]]+)([,}\]])/g, (full, p1, p2, p3, p4, p5) => {
-                // Quote unquoted non-numeric values
-                const trimmed = p4.trim()
-                if (!/^(true|false|null|-?\d+\.?\d*)$/.test(trimmed)) {
-                  return `${p1}"${p2}"${p3}"${trimmed}"${p5}`
-                }
-                return full
-              })
-            
-            const parsed = JSON.parse(fixedMatch)
-            console.log(`Method 3 (regex + repair) succeeded for ${type}`)
-            return parsed
-          } catch (e) {
-            continue // Try next match
-          }
-        }
-      }
-    } catch (e) {
-      console.log(`Method 3 failed: ${e}`)
-    }
-
-    // Method 4: Progressive truncation
-    try {
-      let workingResponse = response.trim()
-      const openBrace = workingResponse.indexOf('{')
-      const openBracket = workingResponse.indexOf('[')
-      const jsonStart = Math.max(openBrace, openBracket)
-      
-      if (jsonStart >= 0) {
-        workingResponse = workingResponse.substring(jsonStart)
-        
-        // Try progressively smaller chunks
-        for (let percent = 100; percent >= 30; percent -= 10) {
-          try {
-            const length = Math.floor(workingResponse.length * percent / 100)
-            let chunk = workingResponse.substring(0, length)
-            
-            // Try to complete the JSON structure
-            if (chunk.startsWith('{') && !chunk.endsWith('}')) {
-              // Count open braces
-              const openBraces = (chunk.match(/\{/g) || []).length
-              const closeBraces = (chunk.match(/\}/g) || []).length
-              chunk += '}'.repeat(Math.max(0, openBraces - closeBraces))
-            } else if (chunk.startsWith('[') && !chunk.endsWith(']')) {
-              // Count open brackets  
-              const openBrackets = (chunk.match(/\[/g) || []).length
-              const closeBrackets = (chunk.match(/\]/g) || []).length
-              chunk += ']'.repeat(Math.max(0, openBrackets - closeBrackets))
-            }
-            
-            // Clean up common issues
-            chunk = chunk
-              .replace(/,(\s*[}\]])/g, '$1')
-              .replace(/\n/g, ' ')
-              .replace(/\s{2,}/g, ' ')
-            
-            const parsed = JSON.parse(chunk)
-            console.log(`Method 4 (progressive truncation) succeeded for ${type} at ${percent}%`)
-            return parsed
-          } catch (e) {
-            continue
-          }
-        }
-      }
-    } catch (e) {
-      console.log(`Method 4 failed: ${e}`)
-    }
-
-    // If all parsing methods fail, provide detailed error info and fallback
-    console.error(`All JSON parsing methods failed for ${type}`)
-    console.error('Raw response (first 1000 chars):', response.substring(0, 1000))
-    console.error('Raw response (last 500 chars):', response.substring(Math.max(0, response.length - 500)))
+  private validateGeminiResult(result: any, transcript: string): GeminiAnalysisResult {
+    console.log('Validating Gemini result structure...')
     
-    // Return fallback structure instead of throwing
-    if (type === 'segmentation') {
-      console.log('Returning fallback segmentation structure')
-      return this.createFallbackSegmentation('Failed to parse Gemini response')
-    } else {
-      console.log('Returning fallback analysis structure')
-      return this.createFallbackAnalysis([])
+    // Ensure basic structure exists
+    const validated: GeminiAnalysisResult = {
+      callType: (result.callType && !result.callType.includes('Fallback')) ? result.callType : 'HVAC Service Call',
+      overallScore: typeof result.overallScore === 'number' ? Math.max(0, Math.min(100, result.overallScore)) : 75,
+      stages: [],
+      salesInsights: {
+        opportunities: Array.isArray(result.salesInsights?.opportunities) ? result.salesInsights.opportunities : [],
+        successful: Array.isArray(result.salesInsights?.successful) ? result.salesInsights.successful : [],
+        missed: Array.isArray(result.salesInsights?.missed) ? result.salesInsights.missed : []
+      },
+      segmentedTranscript: []
     }
+    
+    // Validate stages
+    const requiredStages = ['introduction', 'diagnosis', 'solution', 'upsell', 'maintenance', 'closing']
+    const validQualities = ['Poor', 'Fair', 'Good', 'Excellent']
+    
+    for (const stage of requiredStages) {
+      const stageData = Array.isArray(result.stages) 
+        ? result.stages.find((s: any) => s.stage === stage)
+        : null
+      
+      validated.stages.push({
+        stage,
+        content: [], // Not used in our interface
+        quality: validQualities.includes(stageData?.quality) ? stageData.quality : 'Fair',
+        notes: stageData?.notes || `${stage} stage analysis`
+      })
+    }
+    
+    // Validate segments
+    if (Array.isArray(result.segments) && result.segments.length > 0) {
+      validated.segmentedTranscript = result.segments
+        .filter((s: any) => s.speaker && s.text)
+        .map((s: any, index: number) => ({
+          speaker: s.speaker,
+          text: s.text,
+          timestamp: s.timestamp || `${Math.floor(index * 20 / 60).toString().padStart(2, '0')}:${(index * 20 % 60).toString().padStart(2, '0')}`,
+          stage: requiredStages.includes(s.stage) ? s.stage : this.determineStageFromText(index, s.text, result.segments.length)
+        }))
+    } else {
+      // Fallback to parsing transcript
+      console.log('No valid segments from Gemini, parsing transcript manually...')
+      validated.segmentedTranscript = this.parseTranscriptToSegments(transcript)
+    }
+    
+    console.log('Validation complete')
+    console.log('- Stages:', validated.stages.length)
+    console.log('- Segments:', validated.segmentedTranscript.length)
+    console.log('- Opportunities:', validated.salesInsights.opportunities.length)
+    
+    return validated
   }
 
-  private createFallbackSegmentation(transcript: string): any {
-    console.log('Creating fallback segmentation...')
-    
+  private parseTranscriptToSegments(transcript: string) {
     const lines = transcript.split('\n').filter(line => line.trim() !== '')
     const segments = []
     let timestamp = 15 // Start at 15 seconds
@@ -519,61 +306,10 @@ OverallScore must be a number between 0-100.
       }
     }
     
-    return {
-      segments,
-      callType: 'Service Call (Fallback Analysis)'
-    }
+    return segments
   }
 
-  private createFallbackAnalysis(segments: any[]): any {
-    console.log('Creating fallback analysis...')
-    
-    const stageCount = segments.reduce((acc, seg) => {
-      acc[seg.stage] = (acc[seg.stage] || 0) + 1
-      return acc
-    }, {} as Record<string, number>)
 
-    return {
-      overallScore: 75,
-      stages: [
-        {
-          stage: 'introduction',
-          quality: stageCount.introduction > 0 ? 'Good' : 'Missing',
-          notes: stageCount.introduction > 0 ? 'Introduction elements present in transcript' : 'No clear introduction identified'
-        },
-        {
-          stage: 'diagnosis',
-          quality: stageCount.diagnosis > 0 ? 'Good' : 'Fair',
-          notes: stageCount.diagnosis > 0 ? 'Problem diagnosis discussion identified' : 'Limited diagnostic conversation'
-        },
-        {
-          stage: 'solution',
-          quality: stageCount.solution > 0 ? 'Good' : 'Fair',
-          notes: stageCount.solution > 0 ? 'Solution explanation provided' : 'Basic solution discussion present'
-        },
-        {
-          stage: 'upsell',
-          quality: stageCount.upsell > 0 ? 'Fair' : 'Missing',
-          notes: stageCount.upsell > 0 ? 'Some upselling attempts identified' : 'No clear upselling identified'
-        },
-        {
-          stage: 'maintenance',
-          quality: stageCount.maintenance > 0 ? 'Good' : 'Missing',
-          notes: stageCount.maintenance > 0 ? 'Maintenance options discussed' : 'No maintenance plan offered'
-        },
-        {
-          stage: 'closing',
-          quality: stageCount.closing > 0 ? 'Good' : 'Fair',
-          notes: stageCount.closing > 0 ? 'Professional closing identified' : 'Basic call conclusion'
-        }
-      ],
-      salesInsights: {
-        opportunities: ['Fallback analysis - manual review recommended for accurate opportunity identification'],
-        successful: ['Basic service delivery completed'],
-        missed: ['Detailed analysis unavailable - manual review needed']
-      }
-    }
-  }
 
   private determineStageFromText(index: number, text: string, totalLines: number): string {
     const progress = index / Math.max(totalLines, 1)

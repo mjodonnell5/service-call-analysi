@@ -323,7 +323,7 @@ function App() {
                                 </div>
                               </div>
                               
-                               <>
+                              <>
                                 {aiProvider === 'openai' && (
                                   <div className="border rounded-lg p-4 bg-blue-50">
                                     <div className="flex items-center justify-between mb-3">

@@ -296,6 +296,11 @@ function App() {
                                     <label htmlFor="provider-openai" className="text-sm">
                                       OpenAI (Enhanced analysis with GPT-4)
                                     </label>
+                                    {aiProvider === 'openai' && (
+                                      <Badge variant={openaiApiKey ? "default" : "destructive"} className="text-xs">
+                                        {openaiApiKey ? 'CONFIGURED' : 'NEEDS SETUP'}
+                                      </Badge>
+                                    )}
                                   </div>
                                   <div className="flex items-center space-x-2">
                                     <input
@@ -309,74 +314,132 @@ function App() {
                                     <label htmlFor="provider-gemini" className="text-sm">
                                       Gemini AI (Google's AI model)
                                     </label>
+                                    {aiProvider === 'gemini' && (
+                                      <Badge variant={geminiApiKey ? "default" : "destructive"} className="text-xs">
+                                        {geminiApiKey ? 'CONFIGURED' : 'NEEDS SETUP'}
+                                      </Badge>
+                                    )}
                                   </div>
                                 </div>
                               </div>
                               
                                {aiProvider === 'openai' && (
-                                <div>
-                                  <label className="text-xs text-muted-foreground">OpenAI API Key:</label>
-                                  <div className="flex gap-2 mt-1">
-                                    <input
-                                      type="password"
-                                      value={openaiApiKey || ''}
-                                      onChange={(e) => setOpenaiApiKey(e.target.value)}
-                                      placeholder="Enter OpenAI API key (sk-proj-...)"
-                                      className="flex-1 px-2 py-1 text-xs border rounded"
-                                    />
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={async () => {
-                                        if (!openaiApiKey || openaiApiKey.trim().length === 0) {
-                                          setError('Please enter an OpenAI API key first')
-                                          return
-                                        }
-                                        
-                                        setError(null)
-                                        setDebugInfo(null)
-                                        
-                                        try {
-                                          setCurrentStep('Testing OpenAI API connection...')
-                                          console.log('Testing OpenAI API key...')
-                                          
-                                          const { testOpenAIAPI } = await import('@/services/openai')
-                                          const testResult = await testOpenAIAPI(openaiApiKey)
-                                          
-                                          if (testResult.success) {
-                                            setCurrentStep('✅ OpenAI API key is valid!')
-                                            setTimeout(() => setCurrentStep(''), 3000)
-                                          } else {
-                                            throw new Error(testResult.error || 'API test failed')
-                                          }
-                                          
-                                        } catch (err) {
-                                          console.error('OpenAI API test failed:', err)
-                                          const errorMessage = err instanceof Error ? err.message : 'API test failed'
-                                          setError(`API Test Failed: ${errorMessage}`)
-                                          setCurrentStep('')
-                                          
-                                          if (err instanceof Error && err.message.includes('Invalid OpenAI API key')) {
-                                            setDebugInfo('Please check that your API key is correct and has the format: sk-proj-...')
-                                          } else if (err instanceof Error && err.message.includes('quota')) {
-                                            setDebugInfo('Your OpenAI API quota may be exceeded. Check your OpenAI billing and usage.')
-                                          } else if (err instanceof Error && err.message.includes('403')) {
-                                            setDebugInfo('API key may not have proper permissions. Ensure you\'re using a valid OpenAI API key.')
-                                          }
-                                        }
-                                      }}
-                                      disabled={!openaiApiKey || openaiApiKey.trim().length === 0}
-                                      className="text-xs"
-                                    >
-                                      Test
-                                    </Button>
+                                <div className="border rounded-lg p-4 bg-blue-50">
+                                  <div className="flex items-center justify-between mb-3">
+                                    <label className="text-sm font-medium">OpenAI Configuration</label>
+                                    <Badge variant={openaiApiKey ? "default" : "destructive"}>
+                                      {openaiApiKey ? 'READY' : 'SETUP REQUIRED'}
+                                    </Badge>
                                   </div>
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    Get your API key from{' '}
-                                    <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" className="text-primary underline">
-                                      OpenAI Platform
-                                    </a>
-                                  </p>
+                                  
+                                  <div className="space-y-3">
+                                    <div>
+                                      <label className="text-xs text-muted-foreground">API Key:</label>
+                                      <div className="flex gap-2 mt-1">
+                                        <input
+                                          type="password"
+                                          value={openaiApiKey || ''}
+                                          onChange={(e) => setOpenaiApiKey(e.target.value)}
+                                          placeholder="Enter OpenAI API key (sk-proj-...)"
+                                          className="flex-1 px-3 py-2 text-sm border rounded-md"
+                                        />
+                                      </div>
+                                    </div>
+                                    
+                                    <div className="flex gap-2">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={async () => {
+                                          if (!openaiApiKey || openaiApiKey.trim().length === 0) {
+                                            setError('Please enter an OpenAI API key first')
+                                            return
+                                          }
+                                          
+                                          setError(null)
+                                          setDebugInfo(null)
+                                          
+                                          try {
+                                            setCurrentStep('Testing OpenAI API connection...')
+                                            console.log('Testing OpenAI API key...')
+                                            
+                                            const { testOpenAIAPI } = await import('@/services/openai')
+                                            const testResult = await testOpenAIAPI(openaiApiKey)
+                                            
+                                            if (testResult.success) {
+                                              setCurrentStep('✅ OpenAI API key is valid and ready!')
+                                              setTimeout(() => setCurrentStep(''), 3000)
+                                            } else {
+                                              throw new Error(testResult.error || 'API test failed')
+                                            }
+                                            
+                                          } catch (err) {
+                                            console.error('OpenAI API test failed:', err)
+                                            const errorMessage = err instanceof Error ? err.message : 'API test failed'
+                                            setError(`OpenAI Test Failed: ${errorMessage}`)
+                                            setCurrentStep('')
+                                            
+                                            if (err instanceof Error && err.message.includes('Invalid OpenAI API key')) {
+                                              setDebugInfo('Please check that your API key is correct and has the format: sk-proj-...')
+                                            } else if (err instanceof Error && err.message.includes('quota')) {
+                                              setDebugInfo('Your OpenAI API quota may be exceeded. Check your OpenAI billing and usage.')
+                                            } else if (err instanceof Error && err.message.includes('403')) {
+                                              setDebugInfo('API key may not have proper permissions. Ensure you\\'re using a valid OpenAI API key.')
+                                            }
+                                          }
+                                        }}
+                                        disabled={!openaiApiKey || openaiApiKey.trim().length === 0}
+                                        className="flex-1"
+                                      >
+                                        {currentStep.includes('Testing OpenAI') ? 'Testing...' : 'Test API Connection'}
+                                      </Button>
+                                      
+                                      {openaiApiKey && (
+                                        <Button
+                                          size="sm"
+                                          onClick={async () => {
+                                            setError(null)
+                                            setDebugInfo(null)
+                                            setIsAnalyzing(true)
+                                            setCurrentStep('Quick OpenAI analysis test...')
+                                            
+                                            try {
+                                              const shortTestTranscript = `Technician: Hello, this is Mike from TechRepair. Customer: Hi, my computer isn't working. Technician: I can fix that for $100. Customer: Sounds good.`
+                                              
+                                              const { analyzeServiceCallWithOpenAI } = await import('@/components/CallAnalyzer')
+                                              console.log('Running quick OpenAI analysis test...')
+                                              const result = await analyzeServiceCallWithOpenAI(shortTestTranscript, openaiApiKey)
+                                              
+                                              setCurrentStep('✅ OpenAI analysis test completed successfully!')
+                                              setTimeout(() => setCurrentStep(''), 3000)
+                                              console.log('OpenAI analysis test passed')
+                                              
+                                            } catch (err) {
+                                              console.error('OpenAI analysis test failed:', err)
+                                              const errorMessage = err instanceof Error ? err.message : 'Analysis test failed'
+                                              setError(`OpenAI Analysis Test Failed: ${errorMessage}`)
+                                              setCurrentStep('')
+                                            } finally {
+                                              setIsAnalyzing(false)
+                                            }
+                                          }}
+                                          variant="default"
+                                          disabled={isAnalyzing}
+                                          className="flex-1"
+                                        >
+                                          {isAnalyzing ? 'Testing...' : 'Test Full Analysis'}
+                                        </Button>
+                                      )}
+                                    </div>
+                                    
+                                    <p className="text-xs text-muted-foreground">
+                                      Get your API key from{' '}
+                                      <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" className="text-primary underline">
+                                        OpenAI Platform
+                                      </a>
+                                      {' '}• Enhanced analysis with GPT-4 provides better accuracy
+                                    </p>
+                                  </div>
                                 </div>
                                )}
 

@@ -7,9 +7,11 @@ import { Progress } from '@/components/ui/progress'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { useKV } from '@github/spark/hooks'
-import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendingUp, Clock, Microphone, AlertTriangle } from '@phosphor-icons/react'
-import { analyzeServiceCall, useMockTranscription } from '@/components/CallAnalyzer'
+import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendingUp, Clock, Microphone, AlertTriangle, Settings } from '@phosphor-icons/react'
+import { analyzeServiceCall, useRealTranscription, useMockTranscription } from '@/components/CallAnalyzer'
 import { InsightsPanel } from '@/components/InsightsPanel'
+import { ConfigurationPanel } from '@/components/ConfigurationPanel'
+import { TranscriptionConfig } from '@/services/transcription'
 
 interface CallAnalysis {
   callType: string
@@ -39,12 +41,19 @@ interface CallAnalysis {
 
 function App() {
   const [analysis, setAnalysis] = useKV<CallAnalysis | null>('call-analysis', null)
+  const [transcriptionConfig, setTranscriptionConfig] = useKV<TranscriptionConfig | null>('transcription-config', null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [currentStep, setCurrentStep] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<string | null>(null)
+  const [showConfig, setShowConfig] = useState(false)
   
-  const { transcribeAudio, isTranscribing } = useMockTranscription()
+  // Use real transcription if configured, fallback to mock
+  const { transcribeAudio: realTranscribe, isTranscribing: isRealTranscribing } = useRealTranscription(transcriptionConfig)
+  const { transcribeAudio: mockTranscribe, isTranscribing: isMockTranscribing } = useMockTranscription()
+  
+  const isTranscribing = transcriptionConfig ? isRealTranscribing : isMockTranscribing
+  const transcribeAudio = transcriptionConfig ? realTranscribe : mockTranscribe
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -121,87 +130,143 @@ function App() {
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-foreground mb-2">Service Call Analysis Dashboard</h1>
             <p className="text-muted-foreground">Upload a service call recording to analyze technician performance and sales opportunities</p>
+            <div className="mt-4 flex justify-center">
+              {transcriptionConfig ? (
+                <Badge variant="default" className="bg-green-600">
+                  Production Mode - Real Transcription Active
+                </Badge>
+              ) : (
+                <Badge variant="secondary">
+                  Demo Mode - Setup Real Transcription for Production
+                </Badge>
+              )}
+            </div>
           </div>
 
-          <Card className="max-w-md mx-auto">
-            <CardHeader className="text-center">
-              <CardTitle className="flex items-center justify-center gap-2">
-                <CloudArrowUp size={24} />
-                Upload Recording
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {isAnalyzing || isTranscribing ? (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-center">
-                    <Microphone size={48} className="text-primary animate-pulse" />
-                  </div>
-                  <div>
-                    <Progress value={getProgressValue()} className="mb-2" />
-                    <p className="text-sm text-center text-muted-foreground">
-                      {currentStep || 'Processing...'}
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {error && (
-                    <Alert className="border-destructive">
-                      <AlertTriangle className="h-4 w-4" />
-                      <AlertDescription>
-                        <div className="space-y-2">
-                          <p>{error}</p>
-                          {debugInfo && (
-                            <details className="mt-2">
-                              <summary className="text-xs cursor-pointer">Technical Details</summary>
-                              <pre className="text-xs mt-1 p-2 bg-muted rounded overflow-auto max-h-32">
-                                {debugInfo}
-                              </pre>
-                            </details>
-                          )}
-                        </div>
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                  
-                  <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
-                    <CloudArrowUp size={48} className="mx-auto mb-4 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground mb-4">
-                      Select an audio file to begin analysis
-                    </p>
-                    <input
-                      type="file"
-                      accept="audio/*"
-                      onChange={handleFileUpload}
-                      className="hidden"
-                      id="audio-upload"
-                    />
-                    <Button asChild>
-                      <label htmlFor="audio-upload" className="cursor-pointer">
-                        Choose File
-                      </label>
-                    </Button>
-                  </div>
-                  
-                  <Alert>
-                    <AlertDescription>
-                      <strong>AI-Powered Analysis:</strong> This tool uses advanced AI to transcribe and analyze service calls, identifying compliance issues and sales opportunities.
-                    </AlertDescription>
-                  </Alert>
-                  
-                  <div className="mt-4 pt-4 border-t border-border">
-                    <p className="text-xs text-muted-foreground mb-2">For testing purposes:</p>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={async () => {
-                        setError(null)
-                        setDebugInfo(null)
-                        setIsAnalyzing(true)
-                        setCurrentStep('Running test analysis...')
-                        
-                        try {
-                          const testTranscript = `Technician: Good morning! This is Mike from AirFlow Solutions.
+          {showConfig ? (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold">Transcription Configuration</h2>
+                <Button variant="outline" onClick={() => setShowConfig(false)}>
+                  Back to Upload
+                </Button>
+              </div>
+              <ConfigurationPanel 
+                onConfigured={(config) => {
+                  setTranscriptionConfig(config)
+                  setShowConfig(false)
+                }} 
+              />
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <Card className="max-w-md mx-auto">
+                <CardHeader className="text-center">
+                  <CardTitle className="flex items-center justify-center gap-2">
+                    <CloudArrowUp size={24} />
+                    Upload Recording
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {isAnalyzing || isTranscribing ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-center">
+                        <Microphone size={48} className="text-primary animate-pulse" />
+                      </div>
+                      <div>
+                        <Progress value={getProgressValue()} className="mb-2" />
+                        <p className="text-sm text-center text-muted-foreground">
+                          {currentStep || 'Processing...'}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {error && (
+                        <Alert className="border-destructive">
+                          <AlertTriangle className="h-4 w-4" />
+                          <AlertDescription>
+                            <div className="space-y-2">
+                              <p>{error}</p>
+                              {debugInfo && (
+                                <details className="mt-2">
+                                  <summary className="text-xs cursor-pointer">Technical Details</summary>
+                                  <pre className="text-xs mt-1 p-2 bg-muted rounded overflow-auto max-h-32">
+                                    {debugInfo}
+                                  </pre>
+                                </details>
+                              )}
+                            </div>
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                      
+                      <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
+                        <CloudArrowUp size={48} className="mx-auto mb-4 text-muted-foreground" />
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Select an audio or video file to begin analysis
+                        </p>
+                        <input
+                          type="file"
+                          accept="audio/*,video/*"
+                          onChange={handleFileUpload}
+                          className="hidden"
+                          id="audio-upload"
+                        />
+                        <Button asChild>
+                          <label htmlFor="audio-upload" className="cursor-pointer">
+                            Choose File
+                          </label>
+                        </Button>
+                      </div>
+                      
+                      <Alert>
+                        <AlertDescription>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <strong>
+                                {transcriptionConfig ? 'Real AI Transcription Active' : 'Demo Mode'}
+                              </strong>
+                              {transcriptionConfig && (
+                                <Badge variant="secondary">
+                                  {transcriptionConfig.provider.toUpperCase()}
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-sm">
+                              {transcriptionConfig 
+                                ? 'Using real transcription API for production-quality results.'
+                                : 'Using demo transcription. Configure real API for production use.'
+                              }
+                            </p>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+
+                      <div className="flex gap-2">
+                        <Button 
+                          variant="outline" 
+                          onClick={() => setShowConfig(true)}
+                          className="flex items-center gap-2 flex-1"
+                        >
+                          <Settings size={16} />
+                          {transcriptionConfig ? 'Reconfigure API' : 'Setup Real Transcription'}
+                        </Button>
+                      </div>
+                      
+                      <div className="mt-4 pt-4 border-t border-border">
+                        <p className="text-xs text-muted-foreground mb-2">For testing purposes:</p>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={async () => {
+                            setError(null)
+                            setDebugInfo(null)
+                            setIsAnalyzing(true)
+                            setCurrentStep('Running test analysis...')
+                            
+                            try {
+                              const testTranscript = `Technician: Good morning! This is Mike from AirFlow Solutions.
 Customer: Hello, thank you for coming out.
 Technician: What seems to be the problem with your air conditioning?
 Customer: It stopped working yesterday.
@@ -212,28 +277,30 @@ Customer: Let me think about that.
 Technician: All done! Your system is working perfectly now.
 Customer: Thank you so much!
 Technician: You're welcome! Have a great day!`
-                          
-                          const analysisResult = await analyzeServiceCall(testTranscript)
-                          setAnalysis(analysisResult)
-                          setCurrentStep('')
-                        } catch (err) {
-                          console.error('Test analysis error:', err)
-                          const errorMessage = err instanceof Error ? err.message : 'Test analysis failed'
-                          setError(`Test Analysis Error: ${errorMessage}`)
-                          setDebugInfo(err instanceof Error ? err.stack || 'No stack trace available' : 'Unknown error type')
-                        } finally {
-                          setIsAnalyzing(false)
-                        }
-                      }}
-                      className="w-full"
-                    >
-                      Test AI Analysis (Demo)
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                              
+                              const analysisResult = await analyzeServiceCall(testTranscript)
+                              setAnalysis(analysisResult)
+                              setCurrentStep('')
+                            } catch (err) {
+                              console.error('Test analysis error:', err)
+                              const errorMessage = err instanceof Error ? err.message : 'Test analysis failed'
+                              setError(`Test Analysis Error: ${errorMessage}`)
+                              setDebugInfo(err instanceof Error ? err.stack || 'No stack trace available' : 'Unknown error type')
+                            } finally {
+                              setIsAnalyzing(false)
+                            }
+                          }}
+                          className="w-full"
+                        >
+                          Test AI Analysis (Demo)
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
       </div>
     )

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { transcriptionService, TranscriptionConfig } from '@/services/transcription'
 
 interface AnalysisResult {
   callType: string
@@ -231,6 +232,42 @@ function createFallbackAnalysis(transcript: string, error: any): AnalysisResult 
   }
 }
 
+// Production transcription hook
+export function useRealTranscription(config: TranscriptionConfig | null) {
+  const [isTranscribing, setIsTranscribing] = useState(false)
+
+  const transcribeAudio = async (file: File): Promise<string> => {
+    if (!config) {
+      throw new Error('Transcription service not configured. Please configure an API key first.')
+    }
+
+    setIsTranscribing(true)
+    
+    try {
+      console.log(`Starting real transcription with ${config.provider}...`)
+      console.log(`File: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`)
+      
+      const transcript = await transcriptionService.transcribe(file, config.apiKey, config.provider)
+      
+      if (!transcript || transcript.trim().length === 0) {
+        throw new Error('Transcription completed but no text was returned')
+      }
+      
+      console.log('Transcription completed successfully')
+      return transcript
+      
+    } catch (error) {
+      console.error('Real transcription error:', error)
+      throw error
+    } finally {
+      setIsTranscribing(false)
+    }
+  }
+
+  return { transcribeAudio, isTranscribing }
+}
+
+// Mock transcription for demo/testing purposes
 export function useMockTranscription() {
   const [isTranscribing, setIsTranscribing] = useState(false)
 
@@ -239,8 +276,8 @@ export function useMockTranscription() {
     
     try {
       // Validate file type
-      if (!file.type.startsWith('audio/')) {
-        throw new Error('Please upload an audio file')
+      if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
+        throw new Error('Please upload an audio or video file')
       }
       
       // Check file size (max 50MB for demo)
@@ -254,8 +291,7 @@ export function useMockTranscription() {
       const delay = Math.min(Math.max(file.size / (1024 * 1024) * 1000, 2000), 8000)
       await new Promise(resolve => setTimeout(resolve, delay))
       
-      // Return mock transcript - in real implementation this would call a transcription service
-      // For demo purposes, we return a comprehensive service call transcript
+      // Return mock transcript - comprehensive service call example
       return `Technician: Good morning! This is Mike from AirFlow Solutions. I'm here about your air conditioning service request. Am I speaking with Mrs. Johnson?
 
 Customer: Yes, that's me. Thank you for coming out so quickly. The AC stopped working completely yesterday evening.
@@ -297,7 +333,7 @@ Customer: No, I think we're all set. Thanks again for the excellent service!
 Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for your first tune-up. Have a great day and stay cool!`
       
     } catch (error) {
-      console.error('Transcription error:', error)
+      console.error('Mock transcription error:', error)
       throw error
     } finally {
       setIsTranscribing(false)

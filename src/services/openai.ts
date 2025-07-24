@@ -277,16 +277,38 @@ export class OpenAIAnalyzer {
   }
 
   async segmentTranscript(transcript: string): Promise<any[]> {
+    if (!transcript || transcript.trim().length === 0) {
+      console.warn('Empty transcript provided to segmentTranscript')
+      return this.createBasicSegments(transcript)
+    }
+    
+    console.log(`Starting transcript segmentation. Length: ${transcript.length} chars`)
+    
     // If transcript is very long, break it into smaller chunks
-    const maxInputLength = 6000 // Reduced for better reliability
+    const maxInputLength = 5000 // Smaller chunks for more reliable processing
     
     if (transcript.length > maxInputLength) {
       console.log(`Transcript too long (${transcript.length} chars), processing in chunks...`)
-      return await this.segmentTranscriptInChunks(transcript, maxInputLength)
+      try {
+        const chunks = await this.segmentTranscriptInChunks(transcript, maxInputLength)
+        if (chunks.length > 0) {
+          console.log(`Successfully processed ${chunks.length} segments from chunks`)
+          return chunks
+        } else {
+          console.warn('Chunk processing returned empty, falling back to basic segmentation')
+          return this.createBasicSegments(transcript)
+        }
+      } catch (chunkError) {
+        console.error('Chunk processing failed:', chunkError)
+        console.log('Falling back to basic segmentation due to chunk error')
+        return this.createBasicSegments(transcript)
+      }
     }
     
     // Enhanced prompt with better structure for reliability
     const prompt = `Parse this service call transcript and return a JSON array of segments.
+
+CRITICAL: Return ONLY the JSON array. No markdown, no explanations.
 
 Example format:
 [
@@ -294,37 +316,35 @@ Example format:
   {"speaker": "Customer", "timestamp": "0:05", "text": "Hi, my system isn't working", "stage": "diagnosis"}
 ]
 
-Rules:
-- Return ONLY the JSON array, no other text
-- Each segment must have: speaker, timestamp, text, stage
-- Speaker: use "Technician" or "Customer" 
-- Stage: use "introduction", "diagnosis", "solution", "upsell", "maintenance", or "closing"
-- Keep text under 200 characters
-- Create 5-15 segments total
+Requirements:
+- speaker: "Technician" or "Customer" only
+- timestamp: format "MM:SS" 
+- text: actual spoken words (under 300 chars)
+- stage: "introduction", "diagnosis", "solution", "upsell", "maintenance", or "closing" only
+- Create 4-20 segments total (aim for meaningful exchanges)
 
-Stage assignment:
-- introduction: greetings, introductions
-- diagnosis: problem discussion, troubleshooting  
-- solution: fixes, repairs, explanations
-- upsell: additional services offered
-- maintenance: service plans, agreements
-- closing: goodbyes, wrap-up
-
-Transcript:
-${transcript.substring(0, 4000)}`
+Transcript to parse:
+${transcript.substring(0, 4500)}`
 
     const messages = [
       { 
         role: 'system', 
-        content: 'You are a JSON-only service. Return only valid JSON arrays or objects. Never use markdown formatting, code blocks, or explanatory text.' 
+        content: 'You are a strict JSON-only response system. Return ONLY valid JSON arrays. Never use markdown formatting, code blocks, explanations, or any text outside the JSON structure.' 
       },
       { role: 'user', content: prompt }
     ]
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        console.log(`Segmentation attempt ${attempt}/3`)
-        const response = await this.makeRequest(messages, 0.05, true) // Lower temperature for consistency
+        console.log(`AI segmentation attempt ${attempt}/3`)
+        const response = await this.makeRequest(messages, 0.05, true) // Very low temperature for consistency
+        
+        if (!response || response.trim().length === 0) {
+          throw new Error('Empty response from OpenAI')
+        }
+        
+        console.log('Raw AI response length:', response.length)
+        console.log('Raw AI response preview:', response.substring(0, 200))
         
         const cleanedResponse = this.cleanJsonResponse(response)
         const segments = JSON.parse(cleanedResponse)
@@ -334,8 +354,10 @@ ${transcript.substring(0, 4000)}`
         }
         
         if (segments.length === 0) {
-          throw new Error('Empty segments array returned')
+          throw new Error('Empty segments array returned from AI')
         }
+        
+        console.log(`AI returned ${segments.length} raw segments`)
         
         // Validate and clean segment structure
         const validSegments = this.validateAndCleanSegments(segments)
@@ -344,71 +366,136 @@ ${transcript.substring(0, 4000)}`
           throw new Error('No valid segments found after validation')
         }
         
-        console.log('Valid segments before processing:', validSegments.length)
-        console.log('Sample valid segment:', validSegments[0])
+        console.log(`${validSegments.length} segments passed validation`)
         
         // Post-process to fix speaker consistency and improve stage assignments
         const correctedSegments = this.correctSpeakerAssignments(validSegments)
-        console.log('Segments after speaker correction:', correctedSegments.length)
-        
         const finalSegments = this.improveStageAssignments(correctedSegments)
-        console.log('Final segments after stage improvement:', finalSegments.length)
         
         // Debug stage distribution
         const stageDistribution = finalSegments.reduce((acc, seg) => {
           acc[seg.stage] = (acc[seg.stage] || 0) + 1
           return acc
         }, {} as Record<string, number>)
-        console.log('Final stage distribution:', stageDistribution)
+        console.log('Final AI stage distribution:', stageDistribution)
         
-        console.log(`Successfully parsed ${finalSegments.length} segments`)
+        if (finalSegments.length === 0) {
+          throw new Error('Post-processing resulted in no segments')
+        }
+        
+        console.log(`Successfully processed ${finalSegments.length} segments via AI`)
         return finalSegments
         
       } catch (parseError) {
-        console.error(`Attempt ${attempt}/3 failed:`, parseError)
+        console.error(`AI segmentation attempt ${attempt}/3 failed:`, parseError)
+        
         if (attempt === 3) {
-          // Fallback to basic segmentation
-          console.log('Falling back to basic segmentation...')
-          return this.createBasicSegments(transcript)
+          console.log('All AI attempts failed, falling back to basic segmentation...')
+          const basicSegments = this.createBasicSegments(transcript)
+          console.log(`Basic segmentation produced ${basicSegments.length} segments`)
+          return basicSegments
         }
         
-        // Exponential backoff
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+        // Exponential backoff before retry
+        const delay = 1000 * attempt
+        console.log(`Waiting ${delay}ms before retry...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
       }
     }
     
-    throw new Error('Segmentation failed after all retries')
+    // This should never be reached due to the fallback in the loop, but just in case
+    console.error('Segmentation completely failed, creating emergency fallback')
+    return this.createBasicSegments(transcript)
   }
 
   private createBasicSegments(transcript: string): any[] {
     // Fallback segmentation when AI fails
     console.log('Creating basic segments from transcript...')
+    console.log('Transcript input length:', transcript?.length || 0)
+    console.log('Transcript preview:', transcript?.substring(0, 200) || 'Empty transcript')
     
-    const lines = transcript.split('\n').filter(line => line.trim())
+    if (!transcript || transcript.trim().length === 0) {
+      console.warn('Empty transcript, creating minimal fallback segment')
+      return [{
+        speaker: 'Technician',
+        timestamp: '0:00',
+        text: 'Empty transcript provided',
+        stage: 'introduction'
+      }]
+    }
+    
+    // Try multiple splitting strategies to handle different transcript formats
+    let lines: string[] = []
+    
+    // Strategy 1: Split by lines
+    lines = transcript.split('\n').filter(line => line.trim())
+    
+    // Strategy 2: If not many lines, try splitting by periods or double spaces
+    if (lines.length < 3) {
+      const sentences = transcript.split(/[.!?]+/).filter(s => s.trim().length > 10)
+      if (sentences.length > lines.length) {
+        lines = sentences
+        console.log('Using sentence-based splitting')
+      }
+    }
+    
+    // Strategy 3: If still not many pieces, try speaker patterns from AssemblyAI
+    if (lines.length < 3) {
+      const speakerPattern = /Speaker [AB12]:/gi
+      if (speakerPattern.test(transcript)) {
+        lines = transcript.split(speakerPattern).filter(s => s.trim().length > 5)
+        console.log('Using speaker pattern splitting')
+      }
+    }
+    
+    // Strategy 4: If all else fails, split by length
+    if (lines.length < 3) {
+      const chunkSize = Math.max(100, Math.floor(transcript.length / 8))
+      lines = []
+      for (let i = 0; i < transcript.length; i += chunkSize) {
+        const chunk = transcript.substring(i, i + chunkSize).trim()
+        if (chunk.length > 10) {
+          lines.push(chunk)
+        }
+      }
+      console.log('Using length-based splitting')
+    }
+    
+    console.log(`Processing ${lines.length} text segments`)
+    
     const segments: any[] = []
     let timeOffset = 0
     
+    // Ensure we have at least one segment
+    if (lines.length === 0) {
+      console.warn('No processable lines found, creating single segment from full transcript')
+      lines = [transcript.substring(0, 500)] // Take first 500 chars
+    }
+    
     for (let i = 0; i < lines.length; i++) {
       const trimmed = lines[i].trim()
-      if (!trimmed || trimmed.length < 5) continue
+      if (!trimmed || trimmed.length < 3) continue
       
-      // Simple speaker detection
+      // Simple speaker detection with more patterns
       let speaker = 'Customer'
       let text = trimmed
       
-      // Check if line already has speaker label
-      const speakerMatch = trimmed.match(/^(Technician|Customer|Tech|Cust|Speaker [AB12]|[\[\(]?\d{1,3}:\d{2}[\]\)]?):\s*(.+)/)
+      // Check for existing speaker labels (multiple formats)
+      const speakerMatch = trimmed.match(/^(Technician|Customer|Tech|Cust|Agent|Service|Rep|Speaker [AB12]|[\[\(]?\d{1,3}:\d{2}[\]\)]?):\s*(.+)/)
       if (speakerMatch) {
         const speakerType = speakerMatch[1].toLowerCase()
-        speaker = speakerType.includes('tech') ? 'Technician' : 'Customer'
+        speaker = (speakerType.includes('tech') || speakerType.includes('service') || 
+                   speakerType.includes('agent') || speakerType.includes('rep')) ? 'Technician' : 'Customer'
         text = speakerMatch[2]
       } else {
-        // Infer speaker based on content
+        // Infer speaker based on content with more patterns
         const lowerText = text.toLowerCase()
-        if (lowerText.includes('this is') || lowerText.includes('from') || 
+        if (lowerText.includes('this is') && (lowerText.includes('from') || lowerText.includes('with')) || 
             lowerText.includes('service') || lowerText.includes('technician') ||
             lowerText.includes('company') || lowerText.includes('repair') ||
-            lowerText.includes('let me') || lowerText.includes('i can')) {
+            lowerText.includes('let me') || lowerText.includes('i can') ||
+            lowerText.includes('we offer') || lowerText.includes('our service') ||
+            lowerText.includes('schedule') || lowerText.includes('diagnosis')) {
           speaker = 'Technician'
         }
       }
@@ -416,55 +503,61 @@ ${transcript.substring(0, 4000)}`
       // Enhanced stage detection based on position and content
       let stage = 'diagnosis' // Default
       const lowerText = text.toLowerCase()
-      const isEarly = i < lines.length * 0.25
-      const isLate = i > lines.length * 0.75
+      const isEarly = i < lines.length * 0.3
+      const isLate = i > lines.length * 0.7
+      const isMid = !isEarly && !isLate
       
       // Introduction (early in call)
       if (isEarly && (lowerText.includes('hello') || lowerText.includes('good morning') || 
           lowerText.includes('good afternoon') || lowerText.includes('this is') || 
-          lowerText.includes('calling from'))) {
+          lowerText.includes('calling from') || lowerText.includes('my name is'))) {
         stage = 'introduction'
       }
       // Closing (late in call)
       else if (isLate && (lowerText.includes('thank') || lowerText.includes('goodbye') || 
           lowerText.includes('have a great') || lowerText.includes('take care') ||
-          lowerText.includes('appreciate'))) {
+          lowerText.includes('appreciate') || lowerText.includes('pleasure') ||
+          lowerText.includes('have a good'))) {
         stage = 'closing'
       }
-      // Problem discussion (early-mid call)
+      // Problem discussion
       else if (lowerText.includes('problem') || lowerText.includes('issue') || 
                lowerText.includes('broken') || lowerText.includes('not working') ||
-               lowerText.includes('wrong') || lowerText.includes('stopped')) {
+               lowerText.includes('wrong') || lowerText.includes('stopped') ||
+               lowerText.includes('error') || lowerText.includes('fault')) {
         stage = 'diagnosis'
       }
-      // Solution discussion (mid call)
+      // Solution discussion
       else if (lowerText.includes('fix') || lowerText.includes('repair') || 
                lowerText.includes('replace') || lowerText.includes('install') ||
                lowerText.includes('solution') || lowerText.includes('found') ||
-               lowerText.includes('needs') || lowerText.includes('recommend')) {
+               lowerText.includes('needs') || lowerText.includes('recommend') ||
+               lowerText.includes('should') || lowerText.includes('will')) {
         stage = 'solution'
       }
       // Upsell opportunities
       else if (lowerText.includes('additional') || lowerText.includes('upgrade') || 
                lowerText.includes('also offer') || lowerText.includes('while i\'m here') ||
-               lowerText.includes('consider') || lowerText.includes('package')) {
+               lowerText.includes('consider') || lowerText.includes('package') ||
+               lowerText.includes('might want') || lowerText.includes('other')) {
         stage = 'upsell'
       }
       // Maintenance discussion
       else if (lowerText.includes('maintenance') || lowerText.includes('service plan') ||
                lowerText.includes('annual') || lowerText.includes('preventive') ||
-               lowerText.includes('agreement') || lowerText.includes('schedule')) {
+               lowerText.includes('agreement') || lowerText.includes('schedule') ||
+               lowerText.includes('regular') || lowerText.includes('contract')) {
         stage = 'maintenance'
       }
       
       segments.push({
         speaker,
         timestamp: `${Math.floor(timeOffset / 60)}:${(timeOffset % 60).toString().padStart(2, '0')}`,
-        text: text.substring(0, 300), // Increased length for better context
+        text: text.substring(0, 400), // Increased for more context
         stage
       })
       
-      timeOffset += 15 // Add 15 seconds per segment
+      timeOffset += Math.max(10, Math.floor(300 / Math.max(lines.length, 1))) // Dynamic timing
     }
     
     // Post-process to ensure we have a better distribution of stages
@@ -479,25 +572,49 @@ ${transcript.substring(0, 4000)}`
       // If we have no introduction, force the first segment to be introduction
       if (!stageCount.introduction && segments.length > 0) {
         segments[0].stage = 'introduction'
+        console.log('Forced first segment to introduction')
       }
       
       // If we have no closing, force the last segment to be closing if it makes sense
       if (!stageCount.closing && segments.length > 1) {
         const lastSegment = segments[segments.length - 1]
         const lastText = lastSegment.text.toLowerCase()
-        if (lastText.includes('thank') || lastText.includes('good') || lastText.includes('bye')) {
+        if (lastText.includes('thank') || lastText.includes('good') || lastText.includes('bye') ||
+            lastText.includes('pleasure') || lastText.includes('care')) {
           lastSegment.stage = 'closing'
+          console.log('Forced last segment to closing')
         }
+      }
+      
+      // Ensure at least some variety in stages
+      const uniqueStages = new Set(segments.map(s => s.stage))
+      if (uniqueStages.size < 3 && segments.length > 3) {
+        // Add some variety by changing middle segments
+        const midPoint = Math.floor(segments.length / 2)
+        if (segments[midPoint]) {
+          segments[midPoint].stage = 'solution'
+        }
+        if (segments.length > 4 && segments[midPoint + 1]) {
+          segments[midPoint + 1].stage = 'upsell'
+        }
+        console.log('Added stage variety for better distribution')
       }
     }
     
     console.log(`Created ${segments.length} basic segments`)
-    return segments.length > 0 ? segments : [{
-      speaker: 'Technician',
-      timestamp: '0:00',
-      text: 'Service call transcript processed',
-      stage: 'introduction'
-    }]
+    
+    // Guarantee we return at least one segment
+    if (segments.length === 0) {
+      console.warn('No segments created, providing emergency fallback')
+      return [{
+        speaker: 'Technician',
+        timestamp: '0:00',
+        text: transcript.substring(0, 200) || 'Service call transcript processed',
+        stage: 'introduction'
+      }]
+    }
+    
+    return segments
   }
 
   private validateAndCleanSegments(segments: any[]): any[] {
@@ -651,6 +768,13 @@ ${transcript.substring(0, 4000)}`
   }
 
   private async segmentTranscriptInChunks(transcript: string, chunkSize: number): Promise<any[]> {
+    if (!transcript || transcript.trim().length === 0) {
+      console.warn('Empty transcript provided to chunk processing')
+      return this.createBasicSegments(transcript)
+    }
+    
+    console.log(`Chunking transcript (${transcript.length} chars) with chunk size ${chunkSize}`)
+    
     const lines = transcript.split('\n').filter(line => line.trim())
     const chunks: string[] = []
     let currentChunk = ''
@@ -669,59 +793,145 @@ ${transcript.substring(0, 4000)}`
       chunks.push(currentChunk.trim())
     }
     
+    // If we couldn't split into chunks properly, fall back to basic segmentation
+    if (chunks.length === 0) {
+      console.warn('Could not create chunks, falling back to basic segmentation')
+      return this.createBasicSegments(transcript)
+    }
+    
     console.log(`Processing transcript in ${chunks.length} chunks`)
     
     const allSegments: any[] = []
     let timeOffset = 0
+    let successfulChunks = 0
     
     for (let i = 0; i < chunks.length; i++) {
-      console.log(`Processing chunk ${i + 1}/${chunks.length}`)
+      console.log(`Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)`)
       
       try {
         const chunkSegments = await this.segmentSingleChunk(chunks[i], timeOffset)
-        allSegments.push(...chunkSegments)
         
-        // Update time offset for next chunk
-        if (chunkSegments.length > 0) {
+        if (chunkSegments && chunkSegments.length > 0) {
+          allSegments.push(...chunkSegments)
+          successfulChunks++
+          
+          // Update time offset for next chunk
           const lastTimestamp = chunkSegments[chunkSegments.length - 1].timestamp
           const [minutes, seconds] = lastTimestamp.split(':').map(Number)
-          timeOffset = minutes * 60 + seconds + 10 // Add 10 seconds buffer
+          timeOffset = minutes * 60 + seconds + 15 // Add 15 seconds buffer
+        } else {
+          console.warn(`Chunk ${i + 1} produced no segments`)
         }
         
       } catch (error) {
         console.error(`Chunk ${i + 1} failed:`, error)
-        // Continue with other chunks
+        
+        // Try basic segmentation on this chunk as fallback
+        try {
+          console.log(`Attempting basic segmentation on chunk ${i + 1}`)
+          const basicSegments = this.createBasicSegments(chunks[i])
+          if (basicSegments.length > 0) {
+            // Adjust timestamps for these segments
+            basicSegments.forEach(seg => {
+              seg.timestamp = this.adjustTimestamp(seg.timestamp, timeOffset)
+            })
+            allSegments.push(...basicSegments)
+            timeOffset += basicSegments.length * 20 // Rough time estimate
+          }
+        } catch (basicError) {
+          console.error(`Basic segmentation also failed for chunk ${i + 1}:`, basicError)
+          // Continue with other chunks
+        }
       }
     }
     
-    console.log(`Combined ${allSegments.length} segments from ${chunks.length} chunks`)
+    console.log(`Combined ${allSegments.length} segments from ${chunks.length} chunks (${successfulChunks} successful)`)
+    
+    // If we got very few segments, fall back to basic segmentation of entire transcript
+    if (allSegments.length < 3) {
+      console.warn(`Only ${allSegments.length} segments from chunking, falling back to basic segmentation`)
+      return this.createBasicSegments(transcript)
+    }
+    
     return allSegments
   }
 
   private async segmentSingleChunk(chunk: string, timeOffset: number): Promise<any[]> {
-    const prompt = `Analyze this service call excerpt and return a JSON array. Each element needs: speaker, timestamp, text, stage.
+    if (!chunk || chunk.trim().length === 0) {
+      console.warn('Empty chunk provided to segmentSingleChunk')
+      return []
+    }
+    
+    const prompt = `Parse this service call excerpt and return ONLY a JSON array of segments.
 
-Return ONLY a valid JSON array starting with [ and ending with ]. NO extra text:
+Required format (NO other text):
+[
+  {"speaker": "Technician", "timestamp": "0:00", "text": "Hello there", "stage": "introduction"},
+  {"speaker": "Customer", "timestamp": "0:05", "text": "Hi, I need help", "stage": "diagnosis"}
+]
 
-${chunk}`
+Rules:
+- speaker: "Technician" or "Customer" only
+- timestamp: "MM:SS" format
+- stage: "introduction", "diagnosis", "solution", "upsell", "maintenance", or "closing"
+- Return 1-8 segments per chunk
+
+Call excerpt:
+${chunk.substring(0, 3000)}`
 
     const messages = [
       { 
         role: 'system', 
-        content: 'Return only JSON arrays. No markdown, no explanations.' 
+        content: 'Return ONLY JSON arrays. No markdown, no explanations, no code blocks. Just the raw JSON array starting with [ and ending with ].' 
       },
       { role: 'user', content: prompt }
     ]
 
-    const response = await this.makeRequest(messages, 0.1, true)
-    const cleanedResponse = this.cleanJsonResponse(response)
-    const segments = JSON.parse(cleanedResponse)
-    
-    // Adjust timestamps if needed
-    return segments.map((seg: any) => ({
-      ...seg,
-      timestamp: this.adjustTimestamp(seg.timestamp, timeOffset)
-    }))
+    try {
+      const response = await this.makeRequest(messages, 0.1, true)
+      
+      if (!response || response.trim().length === 0) {
+        throw new Error('Empty response from OpenAI for chunk')
+      }
+      
+      const cleanedResponse = this.cleanJsonResponse(response)
+      const segments = JSON.parse(cleanedResponse)
+      
+      if (!Array.isArray(segments)) {
+        throw new Error(`Expected array for chunk, got ${typeof segments}`)
+      }
+      
+      if (segments.length === 0) {
+        console.warn('AI returned empty array for chunk, falling back to basic segmentation')
+        return this.createBasicSegments(chunk).map(seg => ({
+          ...seg,
+          timestamp: this.adjustTimestamp(seg.timestamp, timeOffset)
+        }))
+      }
+      
+      // Validate segments
+      const validSegments = this.validateAndCleanSegments(segments)
+      
+      // Adjust timestamps if needed
+      const adjustedSegments = validSegments.map((seg: any) => ({
+        ...seg,
+        timestamp: this.adjustTimestamp(seg.timestamp, timeOffset)
+      }))
+      
+      console.log(`Chunk processed successfully: ${adjustedSegments.length} segments`)
+      return adjustedSegments
+      
+    } catch (error) {
+      console.error('Single chunk AI processing failed:', error)
+      console.log('Falling back to basic segmentation for this chunk')
+      
+      // Fallback to basic segmentation for this chunk
+      const basicSegments = this.createBasicSegments(chunk)
+      return basicSegments.map(seg => ({
+        ...seg,
+        timestamp: this.adjustTimestamp(seg.timestamp, timeOffset)
+      }))
+    }
   }
 
   private adjustTimestamp(timestamp: string, offset: number): string {

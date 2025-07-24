@@ -664,8 +664,6 @@ function App() {
                       <div className="mt-4 pt-4 border-t border-border">
                         <p className="text-xs text-muted-foreground mb-2">Note: Upload a real audio file to test the complete analysis pipeline. All AI analysis is live - no demo data.</p>
                       </div>
-
-                      </div>
                     </div>
                   )}
                 </CardContent>

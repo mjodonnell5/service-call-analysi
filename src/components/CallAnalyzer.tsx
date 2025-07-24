@@ -581,10 +581,3 @@ export function useRealTranscription(config: TranscriptionConfig | null) {
 
   return { transcribeAudio, isTranscribing }
 }
-
-
-
-
-
-
-

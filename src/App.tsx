@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { useKV } from '@github/spark/hooks'
 import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendingUp, Clock, Microphone, AlertTriangle, Bug } from '@phosphor-icons/react'
-import { analyzeServiceCall, useRealTranscription, useMockTranscription } from '@/components/CallAnalyzer'
+import { analyzeServiceCall, analyzeServiceCallWithGemini, useRealTranscription, useMockTranscription } from '@/components/CallAnalyzer'
 import { InsightsPanel } from '@/components/InsightsPanel'
 import { DebugPanel } from '@/components/DebugPanel'
 import { TranscriptionConfig } from '@/services/transcription'
@@ -46,6 +46,8 @@ function App() {
     provider: 'assemblyai',
     apiKey: '6e1ea8623e884e45b0da2f9b33bb06f9'
   })
+  const [geminiApiKey, setGeminiApiKey] = useKV<string | null>('gemini-api-key', 'AIzaSyAXkbkoculIKMISxHFkP1j7NunKeOYJAlM')
+  const [useGeminiAnalysis, setUseGeminiAnalysis] = useKV<boolean>('use-gemini-analysis', true)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [currentStep, setCurrentStep] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -79,7 +81,15 @@ function App() {
       setCurrentStep('Analyzing conversation with AI...')
       console.log('Starting AI analysis...')
       
-      const analysisResult = await analyzeServiceCall(transcript)
+      let analysisResult
+      if (useGeminiAnalysis && geminiApiKey) {
+        console.log('Using Gemini AI for enhanced analysis...')
+        analysisResult = await analyzeServiceCallWithGemini(transcript, geminiApiKey)
+      } else {
+        console.log('Using Spark AI for analysis...')
+        analysisResult = await analyzeServiceCall(transcript)
+      }
+      
       console.log('Analysis completed successfully')
       
       setAnalysis(analysisResult)
@@ -144,7 +154,7 @@ function App() {
             <p className="text-muted-foreground">Upload a service call recording to analyze technician performance and sales opportunities</p>
             <div className="mt-4 flex justify-center">
               <Badge variant="default" className="bg-green-600">
-                Production Mode - AssemblyAI Transcription Active
+                {useGeminiAnalysis && geminiApiKey ? 'Gemini AI Analysis Active' : 'Production Mode - AssemblyAI Transcription Active'}
               </Badge>
             </div>
           </div>
@@ -212,16 +222,51 @@ function App() {
                       
                       <Alert>
                         <AlertDescription>
-                          <div className="space-y-2">
+                          <div className="space-y-4">
                             <div className="flex items-center justify-between">
-                              <strong>AssemblyAI Transcription Active</strong>
+                              <strong>Analysis Configuration</strong>
                               <Badge variant="secondary">
-                                PRODUCTION
+                                {useGeminiAnalysis && geminiApiKey ? 'GEMINI AI' : 'SPARK AI'}
                               </Badge>
                             </div>
-                            <p className="text-sm">
-                              Using AssemblyAI with speaker identification for production-quality results.
-                            </p>
+                            
+                            <div className="space-y-3">
+                              <div className="flex items-center space-x-2">
+                                <input
+                                  type="checkbox"
+                                  id="use-gemini"
+                                  checked={useGeminiAnalysis}
+                                  onChange={(e) => setUseGeminiAnalysis(e.target.checked)}
+                                  className="rounded border-gray-300"
+                                />
+                                <label htmlFor="use-gemini" className="text-sm">
+                                  Use Gemini AI for enhanced analysis (better stage categorization)
+                                </label>
+                              </div>
+                              
+                              {useGeminiAnalysis && (
+                                <div>
+                                  <label className="text-xs text-muted-foreground">Gemini API Key:</label>
+                                  <input
+                                    type="password"
+                                    value={geminiApiKey || ''}
+                                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                                    placeholder="Enter Gemini API key"
+                                    className="w-full mt-1 px-2 py-1 text-xs border rounded"
+                                  />
+                                </div>
+                              )}
+                              
+                              <div className="flex items-center justify-between">
+                                <strong>AssemblyAI Transcription Active</strong>
+                                <Badge variant="secondary">
+                                  PRODUCTION
+                                </Badge>
+                              </div>
+                              <p className="text-sm">
+                                Using AssemblyAI with speaker identification for production-quality results.
+                              </p>
+                            </div>
                           </div>
                         </AlertDescription>
                       </Alert>
@@ -281,7 +326,15 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
                               // Store the test transcript for debugging
                               setOriginalTranscript(testTranscript)
                               
-                              const analysisResult = await analyzeServiceCall(testTranscript)
+                              let analysisResult
+                              if (useGeminiAnalysis && geminiApiKey) {
+                                console.log('Using Gemini AI for test analysis...')
+                                analysisResult = await analyzeServiceCallWithGemini(testTranscript, geminiApiKey)
+                              } else {
+                                console.log('Using Spark AI for test analysis...')
+                                analysisResult = await analyzeServiceCall(testTranscript)
+                              }
+                              
                               setAnalysis(analysisResult)
                               setCurrentStep('')
                             } catch (err) {

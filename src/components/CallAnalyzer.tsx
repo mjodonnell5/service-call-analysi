@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { transcriptionService, TranscriptionConfig } from '@/services/transcription'
+import { createGeminiAnalyzer, GeminiAnalysisResult } from '@/services/gemini'
 
 interface AnalysisResult {
   callType: string
@@ -24,6 +25,70 @@ interface AnalysisResult {
       text: string
       stage: string
     }>
+  }
+}
+
+// Enhanced analysis using Gemini API for better stage categorization
+export async function analyzeServiceCallWithGemini(transcript: string, geminiApiKey: string): Promise<AnalysisResult> {
+  if (!transcript || transcript.trim().length === 0) {
+    throw new Error('Empty transcript provided for analysis')
+  }
+
+  console.log('Starting Gemini AI analysis of transcript...')
+  console.log('Transcript length:', transcript.length, 'characters')
+  
+  try {
+    const geminiAnalyzer = createGeminiAnalyzer(geminiApiKey)
+    const result = await geminiAnalyzer.analyzeServiceCall(transcript)
+    
+    // Convert Gemini result to our expected format
+    const analysisResult: AnalysisResult = {
+      callType: result.callType,
+      overallScore: result.overallScore,
+      compliance: {
+        introduction: {
+          present: result.stages.find(s => s.stage === 'introduction')?.quality !== 'Missing',
+          quality: result.stages.find(s => s.stage === 'introduction')?.quality || 'Fair',
+          notes: result.stages.find(s => s.stage === 'introduction')?.notes || 'No analysis available'
+        },
+        diagnosis: {
+          present: result.stages.find(s => s.stage === 'diagnosis')?.quality !== 'Missing',
+          quality: result.stages.find(s => s.stage === 'diagnosis')?.quality || 'Fair',
+          notes: result.stages.find(s => s.stage === 'diagnosis')?.notes || 'No analysis available'
+        },
+        solution: {
+          present: result.stages.find(s => s.stage === 'solution')?.quality !== 'Missing',
+          quality: result.stages.find(s => s.stage === 'solution')?.quality || 'Fair',
+          notes: result.stages.find(s => s.stage === 'solution')?.notes || 'No analysis available'
+        },
+        upsell: {
+          present: result.stages.find(s => s.stage === 'upsell')?.quality !== 'Missing',
+          quality: result.stages.find(s => s.stage === 'upsell')?.quality || 'Fair',
+          notes: result.stages.find(s => s.stage === 'upsell')?.notes || 'No analysis available'
+        },
+        maintenance: {
+          present: result.stages.find(s => s.stage === 'maintenance')?.quality !== 'Missing',
+          quality: result.stages.find(s => s.stage === 'maintenance')?.quality || 'Fair',
+          notes: result.stages.find(s => s.stage === 'maintenance')?.notes || 'No analysis available'
+        },
+        closing: {
+          present: result.stages.find(s => s.stage === 'closing')?.quality !== 'Missing',
+          quality: result.stages.find(s => s.stage === 'closing')?.quality || 'Fair',
+          notes: result.stages.find(s => s.stage === 'closing')?.notes || 'No analysis available'
+        }
+      },
+      salesInsights: result.salesInsights,
+      transcript: {
+        segments: result.segmentedTranscript
+      }
+    }
+
+    console.log('Gemini analysis completed successfully')
+    return analysisResult
+    
+  } catch (error) {
+    console.error('Gemini analysis failed:', error)
+    throw new Error(`Gemini AI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 }
 

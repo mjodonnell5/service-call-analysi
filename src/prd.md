@@ -28,9 +28,13 @@ Service companies need to evaluate technician performance on customer calls to:
 - **Success Criteria**: Clear speaker separation, accurate text transcription, handles various audio qualities
 
 ### 2. AI-Powered Stage Analysis
-- **Functionality**: Automatically categorize conversation segments into 6 stages (introduction, diagnosis, solution, upsell, maintenance, closing)
-- **Purpose**: Structure analysis around standard service call procedures
+- **Functionality**: Automatically categorize conversation segments into 6 stages (introduction, diagnosis, solution, upsell, maintenance, closing) using either Spark AI or Google Gemini for enhanced accuracy
+- **Purpose**: Structure analysis around standard service call procedures with intelligent stage categorization
 - **Success Criteria**: Proper distribution across all stages, logical conversation flow, minimal empty stages
+- **AI Options**: 
+  - **Spark AI**: Built-in analysis using prompt engineering and JSON mode
+  - **Gemini AI**: Enhanced analysis with better stage categorization and context understanding
+  - **Configuration**: Users can toggle between AI providers and configure API keys
 
 ### 3. Compliance Assessment
 - **Functionality**: Evaluate quality and presence of each required call stage
@@ -98,10 +102,21 @@ Service companies need to evaluate technician performance on customer calls to:
 
 ### AI Analysis Pipeline
 1. **Transcription**: AssemblyAI handles audio-to-text with speaker diarization
-2. **Segmentation**: GPT-4o analyzes transcript and creates speaker segments with stage classification
-3. **Compliance Analysis**: Second AI pass evaluates each stage for quality and presence
-4. **Sales Analysis**: Third AI pass identifies opportunities and successful techniques
-5. **Overall Assessment**: Final AI pass generates summary scores and call type identification
+2. **Enhanced Analysis Options**:
+   - **Spark AI**: Multi-stage analysis using built-in LLM with JSON mode for structured results
+   - **Gemini AI**: Advanced analysis with superior stage categorization and context understanding
+3. **Two-Stage Processing** (Gemini mode):
+   - **Stage 1**: Transcript segmentation and stage classification
+   - **Stage 2**: Detailed compliance and sales analysis
+4. **Fallback Systems**: Rule-based analysis when AI fails or for validation
+
+### Improvements Made (Latest Version)
+- **Gemini Integration**: Added Google Gemini API support for enhanced transcript analysis
+- **Better Stage Categorization**: Gemini provides superior understanding of conversation flow and context
+- **Dual AI Options**: Users can choose between Spark AI (fast) or Gemini AI (more accurate)
+- **Configuration Management**: Persistent settings for API keys and analysis preferences
+- **Two-Stage Analysis**: Gemini uses separate calls for segmentation and analysis for better accuracy
+- **Enhanced Error Handling**: Better error messages and debugging for API failures
 
 ### Quality Assurance
 - **Validation**: Multiple layers of validation for AI responses

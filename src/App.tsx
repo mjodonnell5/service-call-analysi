@@ -119,8 +119,14 @@ function App() {
   }
 
   const getProgressValue = () => {
-    if (isTranscribing) return 30
-    if (isAnalyzing && currentStep.includes('Analyzing')) return 70
+    if (isTranscribing) return 20
+    if (isAnalyzing) {
+      if (currentStep.includes('Stage 1')) return 35
+      if (currentStep.includes('Stage 2')) return 50
+      if (currentStep.includes('Stage 3')) return 65
+      if (currentStep.includes('Stage 4')) return 80
+      if (currentStep.includes('Analyzing')) return 40
+    }
     return 100
   }
 
@@ -224,20 +230,48 @@ function App() {
                             setError(null)
                             setDebugInfo(null)
                             setIsAnalyzing(true)
-                            setCurrentStep('Running test analysis...')
+                            setCurrentStep('Stage 1: Parsing test transcript...')
                             
                             try {
-                              const testTranscript = `Technician: Good morning! This is Mike from AirFlow Solutions.
-Customer: Hello, thank you for coming out.
-Technician: What seems to be the problem with your air conditioning?
-Customer: It stopped working yesterday.
-Technician: I found the issue. It's the compressor. I can fix it for $485.
-Customer: Okay, that sounds reasonable.
-Technician: I can also offer you a maintenance plan for $199 annually.
-Customer: Let me think about that.
-Technician: All done! Your system is working perfectly now.
-Customer: Thank you so much!
-Technician: You're welcome! Have a great day!`
+                              const testTranscript = `Technician: Good morning! This is Mike from AirFlow Solutions. I'm here about your air conditioning service request. Am I speaking with Mrs. Johnson?
+
+Customer: Yes, that's me. Thank you for coming out so quickly.
+
+Technician: My pleasure, Mrs. Johnson. I understand your AC stopped working completely yesterday evening. Can you tell me what happened right before it stopped working? Any unusual sounds or behaviors?
+
+Customer: Well, it's been making this grinding noise for about a week. Then yesterday it just shut off completely. We've had so many issues with this unit lately. Our energy bills have been through the roof too.
+
+Technician: A grinding noise often indicates a motor bearing issue. Let me check the unit first and run some diagnostics. How old is this system, and when was it last serviced?
+
+Customer: It's about 12 years old. Honestly, we haven't had it serviced in probably 3 years. My husband has allergies and we've noticed the air quality isn't great either.
+
+Technician: I see the problem now. The compressor motor bearing has failed completely, which explains the grinding noise and shutdown. I can replace the bearing and get you back up and running today for $485, which includes labor and the part.
+
+Customer: That sounds reasonable. How long will it take? And is this something that's likely to happen again?
+
+Technician: About 2 hours for the repair. This particular failure isn't common, but I noticed your air filter is completely clogged, which puts extra strain on the system. I also want to mention we have a UV air purifier system that would significantly improve your indoor air quality, especially helpful for your husband's allergies.
+
+Customer: How much would that cost?
+
+Technician: The UV system is $350 installed. It kills bacteria, mold, and allergens right in your ductwork. Many of our customers with allergy sufferers see immediate improvement in their symptoms.
+
+Customer: That's interesting. What about preventing future breakdowns like this?
+
+Technician: Great question! We offer a comprehensive maintenance plan that includes bi-annual check-ups, filter changes, and priority scheduling. The plan is $199 annually, which works out to less than $17 per month, and includes a 15% discount on any repairs.
+
+Customer: Let me think about the UV system, but the maintenance plan sounds like a good idea. Can you just do the repair for now?
+
+Technician: Absolutely. I'll get started on the compressor repair right away. I'll leave you some information about our services to review when you're ready.
+
+Technician: All done! Your system is running perfectly now. I've tested everything and the temperatures are back to normal. I also replaced your air filter as a courtesy since it was completely blocked.
+
+Customer: Wow, it feels much cooler already. Thank you so much! You know what, I think we should sign up for that maintenance plan. This repair scared us.
+
+Technician: That's a great decision! I can set that up right now. I'll also leave you my direct number so you can call me personally if you decide on that UV system later. Here's your invoice and the maintenance agreement.
+
+Customer: Perfect. Thank you for the excellent service! You really know what you're doing.
+
+Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for your first tune-up. Have a great day and stay cool!`
                               
                               const analysisResult = await analyzeServiceCall(testTranscript)
                               setAnalysis(analysisResult)

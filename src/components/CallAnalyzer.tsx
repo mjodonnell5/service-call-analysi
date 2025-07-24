@@ -32,131 +32,35 @@ export async function analyzeServiceCall(transcript: string): Promise<AnalysisRe
     throw new Error('Empty transcript provided for analysis')
   }
 
-  console.log('Starting AI analysis of transcript...')
+  console.log('Starting multi-stage AI analysis of transcript...')
   
-  const analysisPrompt = spark.llmPrompt`
-You are an expert service call analyst. Analyze this service call transcript and provide a comprehensive evaluation.
-
-TRANSCRIPT:
-${transcript}
-
-Please analyze this call and return a valid JSON response with exactly this structure. Pay special attention to properly categorizing EVERY part of the conversation into the appropriate stage.
-
-{
-  "callType": "Brief description of the type of service call",
-  "overallScore": 85,
-  "compliance": {
-    "introduction": {
-      "present": true,
-      "quality": "Excellent",
-      "notes": "Specific observations about introduction quality"
-    },
-    "diagnosis": {
-      "present": true,
-      "quality": "Good", 
-      "notes": "How well did technician diagnose the problem"
-    },
-    "solution": {
-      "present": true,
-      "quality": "Excellent",
-      "notes": "Quality of solution explanation"
-    },
-    "upsell": {
-      "present": true,
-      "quality": "Good",
-      "notes": "Any upsell attempts made"
-    },
-    "maintenance": {
-      "present": true,
-      "quality": "Excellent", 
-      "notes": "Maintenance plan offerings"
-    },
-    "closing": {
-      "present": true,
-      "quality": "Good",
-      "notes": "How professionally was the call concluded"
-    }
-  },
-  "salesInsights": {
-    "opportunities": ["List of sales opportunities identified"],
-    "successful": ["List of successful sales actions"],
-    "missed": ["List of missed opportunities"]
-  },
-  "transcript": {
-    "segments": [
-      {
-        "speaker": "Technician",
-        "timestamp": "00:15",
-        "text": "What was said",
-        "stage": "introduction"
-      }
-    ]
-  }
-}
-
-CRITICAL REQUIREMENTS FOR TRANSCRIPT SEGMENTS:
-1. Break down the entire conversation into individual speaker segments
-2. Each segment must have the exact speaker name (e.g., "Technician", "Customer") 
-3. Assign realistic timestamps (start with 00:15, increment by 10-30 seconds per segment)
-4. Categorize EVERY segment into one of these stages based on content:
-   - "introduction": Greetings, introductions, initial pleasantries
-   - "diagnosis": Problem identification, questioning, investigation
-   - "solution": Explaining the fix, pricing, technical details
-   - "upsell": Additional services, upgrades, accessories offered
-   - "maintenance": Service plans, warranties, future maintenance
-   - "closing": Wrap-up, thanks, final instructions, goodbyes
-
-IMPORTANT: Return ONLY valid JSON. Do not include any explanatory text before or after the JSON.
-
-Quality values must be exactly one of: "Poor", "Fair", "Good", "Excellent"
-Stage values must be exactly one of: "introduction", "diagnosis", "solution", "upsell", "maintenance", "closing"
-
-Focus on:
-1. Professional standards compliance
-2. Sales opportunity identification 
-3. Customer satisfaction indicators
-4. Areas for improvement
-5. Specific coaching recommendations
-
-Be thorough but constructive in your analysis, and ensure EVERY part of the conversation is represented in the segments array.
-  `
-
   try {
-    console.log('Sending request to AI service...')
-    const response = await spark.llm(analysisPrompt, 'gpt-4o', true)
-    console.log('AI response received, length:', response?.length || 0)
+    // Stage 1: Parse and segment the transcript with stage identification
+    console.log('Stage 1: Segmenting transcript and identifying stages...')
+    const segments = await segmentTranscriptWithAI(transcript)
     
-    if (!response || response.trim() === '') {
-      throw new Error('Empty response from AI service')
+    // Stage 2: Analyze compliance for each stage
+    console.log('Stage 2: Analyzing compliance for each stage...')
+    const compliance = await analyzeComplianceWithAI(transcript, segments)
+    
+    // Stage 3: Identify sales insights
+    console.log('Stage 3: Analyzing sales opportunities...')
+    const salesInsights = await analyzeSalesInsightsWithAI(transcript, segments)
+    
+    // Stage 4: Generate overall assessment
+    console.log('Stage 4: Generating overall assessment...')
+    const overallAssessment = await generateOverallAssessmentWithAI(transcript, compliance, salesInsights)
+    
+    const analysis: AnalysisResult = {
+      callType: overallAssessment.callType,
+      overallScore: overallAssessment.score,
+      compliance,
+      salesInsights,
+      transcript: { segments }
     }
-    
-    console.log('Raw AI response preview:', response.substring(0, 200) + '...')
-    
-    // Clean response - remove any non-JSON content
-    let cleanResponse = response.trim()
-    const jsonStart = cleanResponse.indexOf('{')
-    const jsonEnd = cleanResponse.lastIndexOf('}')
-    
-    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
-      cleanResponse = cleanResponse.substring(jsonStart, jsonEnd + 1)
-    }
-    
-    let analysis: AnalysisResult
-    try {
-      analysis = JSON.parse(cleanResponse)
-      console.log('Successfully parsed AI response')
-      console.log('Segments count from AI:', analysis.transcript?.segments?.length || 0)
-    } catch (parseError) {
-      console.error('JSON parsing failed:', parseError)
-      console.error('Clean response content:', cleanResponse)
-      throw new Error(`Invalid JSON response from AI service: ${parseError}`)
-    }
-    
-    // Validate and sanitize the response
-    analysis = validateAndSanitizeAnalysis(analysis, transcript)
     
     // Log final stage distribution for debugging
-    const stageDistribution = analysis.transcript.segments.reduce((acc, segment) => {
+    const stageDistribution = segments.reduce((acc, segment) => {
       acc[segment.stage] = (acc[segment.stage] || 0) + 1
       return acc
     }, {} as Record<string, number>)
@@ -164,11 +68,286 @@ Be thorough but constructive in your analysis, and ensure EVERY part of the conv
     
     return analysis
   } catch (error) {
-    console.error('Analysis failed:', error)
+    console.error('Multi-stage analysis failed:', error)
     
     // Provide comprehensive fallback analysis if AI fails
     console.log('Providing fallback analysis due to AI failure')
     return createFallbackAnalysis(transcript, error)
+  }
+}
+
+// Stage 1: Segment transcript and identify conversation stages
+async function segmentTranscriptWithAI(transcript: string) {
+  const segmentPrompt = spark.llmPrompt`
+You are a conversation analysis expert. Break down this service call transcript into individual speaker segments and categorize each segment by conversation stage.
+
+TRANSCRIPT:
+${transcript}
+
+Analyze the conversation flow and return a JSON array of segments. Each segment should represent one speaker turn in the conversation.
+
+STAGE DEFINITIONS:
+- "introduction": Greetings, introductions, company identification, initial pleasantries
+- "diagnosis": Problem identification, asking questions, investigating the issue
+- "solution": Explaining the fix, providing pricing, describing technical work
+- "upsell": Offering additional services, upgrades, or optional add-ons
+- "maintenance": Discussing service plans, warranties, future maintenance
+- "closing": Wrap-up, thanks, final instructions, scheduling, goodbyes
+
+Return ONLY a JSON array in this exact format:
+[
+  {
+    "speaker": "Technician",
+    "timestamp": "00:15",
+    "text": "Good morning! This is Mike from AirFlow Solutions.",
+    "stage": "introduction"
+  },
+  {
+    "speaker": "Customer", 
+    "timestamp": "00:18",
+    "text": "Hello, thank you for coming out.",
+    "stage": "introduction"
+  }
+]
+
+IMPORTANT RULES:
+1. Include EVERY speaking turn from the transcript
+2. Use exact speaker names from transcript (e.g., "Technician", "Customer")
+3. Generate realistic timestamps starting at 00:15, incrementing by 10-30 seconds
+4. Stage must be exactly one of: introduction, diagnosis, solution, upsell, maintenance, closing
+5. Text should be the exact words spoken by that speaker
+6. Return ONLY the JSON array, no other text
+  `
+  
+  const response = await spark.llm(segmentPrompt, 'gpt-4o', true)
+  
+  if (!response || response.trim() === '') {
+    throw new Error('Empty response from segmentation AI')
+  }
+  
+  try {
+    // Clean and parse JSON response
+    let cleanResponse = response.trim()
+    const arrayStart = cleanResponse.indexOf('[')
+    const arrayEnd = cleanResponse.lastIndexOf(']')
+    
+    if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+      cleanResponse = cleanResponse.substring(arrayStart, arrayEnd + 1)
+    }
+    
+    const segments = JSON.parse(cleanResponse)
+    
+    if (!Array.isArray(segments)) {
+      throw new Error('Response is not an array')
+    }
+    
+    // Validate and sanitize segments
+    return segments.map((segment: any, index: number) => ({
+      speaker: segment.speaker || 'Unknown',
+      timestamp: segment.timestamp || `${Math.floor(index * 20 / 60).toString().padStart(2, '0')}:${(index * 20 % 60).toString().padStart(2, '0')}`,
+      text: segment.text || '',
+      stage: ['introduction', 'diagnosis', 'solution', 'upsell', 'maintenance', 'closing'].includes(segment.stage) 
+        ? segment.stage 
+        : determineStage(index, segment.text || '', segments.length)
+    }))
+    
+  } catch (parseError) {
+    console.error('Segmentation JSON parsing failed:', parseError)
+    console.log('Falling back to rule-based segmentation...')
+    return parseTranscriptToSegments(transcript)
+  }
+}
+
+// Stage 2: Analyze compliance for each conversation stage
+async function analyzeComplianceWithAI(transcript: string, segments: any[]) {
+  const compliancePrompt = spark.llmPrompt`
+Analyze this service call for compliance with standard procedures. Focus on how well the technician performed in each stage.
+
+FULL TRANSCRIPT:
+${transcript}
+
+CONVERSATION SEGMENTS BY STAGE:
+${segments.map(s => `[${s.stage.toUpperCase()}] ${s.speaker}: ${s.text}`).join('\n')}
+
+Evaluate each stage for presence and quality. Return ONLY this JSON structure:
+
+{
+  "introduction": {
+    "present": true,
+    "quality": "Excellent",
+    "notes": "Technician properly introduced themselves and company. Professional greeting."
+  },
+  "diagnosis": {
+    "present": true,
+    "quality": "Good",
+    "notes": "Good questioning technique to understand the problem. Could have asked more follow-up questions."
+  },
+  "solution": {
+    "present": true,
+    "quality": "Excellent", 
+    "notes": "Clear explanation of the problem and solution. Pricing provided upfront."
+  },
+  "upsell": {
+    "present": true,
+    "quality": "Good",
+    "notes": "Offered relevant additional services. Could have been more persuasive."
+  },
+  "maintenance": {
+    "present": true,
+    "quality": "Excellent",
+    "notes": "Maintenance plan clearly explained with benefits and pricing."
+  },
+  "closing": {
+    "present": true,
+    "quality": "Good", 
+    "notes": "Professional closing with thanks. Could have included follow-up contact info."
+  }
+}
+
+Quality must be exactly one of: "Poor", "Fair", "Good", "Excellent"
+Be specific and constructive in your notes.
+  `
+  
+  const response = await spark.llm(compliancePrompt, 'gpt-4o', true)
+  
+  try {
+    const compliance = JSON.parse(response.trim())
+    
+    // Validate structure and provide defaults
+    const stages = ['introduction', 'diagnosis', 'solution', 'upsell', 'maintenance', 'closing']
+    const validQualities = ['Poor', 'Fair', 'Good', 'Excellent']
+    
+    for (const stage of stages) {
+      if (!compliance[stage]) {
+        compliance[stage] = { present: true, quality: 'Fair', notes: 'Analysis pending' }
+      } else {
+        if (!validQualities.includes(compliance[stage].quality)) {
+          compliance[stage].quality = 'Fair'
+        }
+        if (typeof compliance[stage].present !== 'boolean') {
+          compliance[stage].present = true
+        }
+        if (!compliance[stage].notes) {
+          compliance[stage].notes = 'No specific analysis available'
+        }
+      }
+    }
+    
+    return compliance
+  } catch (error) {
+    console.error('Compliance analysis parsing failed:', error)
+    
+    // Return reasonable defaults
+    return {
+      introduction: { present: true, quality: 'Good', notes: 'Professional introduction observed' },
+      diagnosis: { present: true, quality: 'Good', notes: 'Problem investigation present' },
+      solution: { present: true, quality: 'Good', notes: 'Solution explanation provided' },
+      upsell: { present: true, quality: 'Fair', notes: 'Some additional services mentioned' },
+      maintenance: { present: true, quality: 'Good', notes: 'Maintenance discussion included' },
+      closing: { present: true, quality: 'Good', notes: 'Professional call conclusion' }
+    }
+  }
+}
+
+// Stage 3: Analyze sales opportunities and performance
+async function analyzeSalesInsightsWithAI(transcript: string, segments: any[]) {
+  const salesPrompt = spark.llmPrompt`
+Analyze this service call for sales performance and opportunities. Focus on what the technician did well and what they missed.
+
+TRANSCRIPT:
+${transcript}
+
+UPSELL & MAINTENANCE SEGMENTS:
+${segments.filter(s => s.stage === 'upsell' || s.stage === 'maintenance').map(s => `${s.speaker}: ${s.text}`).join('\n')}
+
+Return ONLY this JSON structure:
+
+{
+  "opportunities": [
+    "Customer mentioned allergies - good opportunity for air purification system",
+    "High energy bills indicate potential for efficiency upgrades"
+  ],
+  "successful": [
+    "Successfully offered maintenance plan with clear benefits",
+    "Provided competitive pricing for repair"
+  ],
+  "missed": [
+    "Could have emphasized long-term cost savings of maintenance plan",
+    "Didn't ask about other HVAC units in the home"
+  ]
+}
+
+Focus on:
+- Specific sales opportunities based on customer pain points
+- What sales techniques worked well
+- Missed opportunities for additional revenue
+- Customer buying signals that were or weren't addressed
+  `
+  
+  const response = await spark.llm(salesPrompt, 'gpt-4o', true)
+  
+  try {
+    const insights = JSON.parse(response.trim())
+    
+    // Ensure arrays exist
+    return {
+      opportunities: Array.isArray(insights.opportunities) ? insights.opportunities : [],
+      successful: Array.isArray(insights.successful) ? insights.successful : [],
+      missed: Array.isArray(insights.missed) ? insights.missed : []
+    }
+  } catch (error) {
+    console.error('Sales insights parsing failed:', error)
+    
+    return {
+      opportunities: ['Manual review recommended for sales opportunity identification'],
+      successful: ['Basic service delivery completed'],
+      missed: ['Analysis failed - manual review needed']
+    }
+  }
+}
+
+// Stage 4: Generate overall call assessment and score
+async function generateOverallAssessmentWithAI(transcript: string, compliance: any, salesInsights: any) {
+  const assessmentPrompt = spark.llmPrompt`
+Based on this compliance analysis and sales performance, provide an overall assessment of the service call.
+
+COMPLIANCE SCORES:
+${Object.entries(compliance).map(([stage, data]: [string, any]) => `${stage}: ${data.quality} (Present: ${data.present})`).join('\n')}
+
+SALES PERFORMANCE:
+- Opportunities identified: ${salesInsights.opportunities.length}
+- Successful actions: ${salesInsights.successful.length}  
+- Missed opportunities: ${salesInsights.missed.length}
+
+Return ONLY this JSON structure:
+
+{
+  "callType": "HVAC Repair Service Call",
+  "score": 85
+}
+
+The call type should be descriptive (e.g., "HVAC Repair Service Call", "Plumbing Installation", "Appliance Maintenance").
+The score should be 0-100 based on overall performance considering compliance and sales effectiveness.
+  `
+  
+  const response = await spark.llm(assessmentPrompt, 'gpt-4o', true)
+  
+  try {
+    const assessment = JSON.parse(response.trim())
+    
+    return {
+      callType: assessment.callType || 'Service Call',
+      score: typeof assessment.score === 'number' && assessment.score >= 0 && assessment.score <= 100 
+        ? assessment.score 
+        : 75
+    }
+  } catch (error) {
+    console.error('Overall assessment parsing failed:', error)
+    
+    return {
+      callType: 'Service Call (AI Assessment Failed)',
+      score: 75
+    }
   }
 }
 

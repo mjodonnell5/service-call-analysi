@@ -7,11 +7,12 @@ import { Progress } from '@/components/ui/progress'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { useKV } from '@github/spark/hooks'
-import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendUp, Clock, Microphone, Warning, Bug } from '@phosphor-icons/react'
+import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendUp, Clock, Microphone, Warning, Bug, Download } from '@phosphor-icons/react'
 import { analyzeServiceCallWithGemini, analyzeServiceCallWithOpenAI, useRealTranscription } from '@/components/CallAnalyzer'
 import { InsightsPanel } from '@/components/InsightsPanel'
 import { DebugPanel } from '@/components/DebugPanel'
 import { TranscriptionConfig } from '@/services/transcription'
+import { TranscriptProcessor, ProcessedTranscript } from '@/services/transcript-processor'
 
 interface CallAnalysis {
   callType: string
@@ -42,6 +43,7 @@ interface CallAnalysis {
 function App() {
   const [analysis, setAnalysis] = useKV<CallAnalysis | null>('call-analysis', null)
   const [originalTranscript, setOriginalTranscript] = useKV<string | null>('original-transcript', null)
+  const [processedTranscript, setProcessedTranscript] = useKV<ProcessedTranscript | null>('processed-transcript', null)
   const [rawAssemblyAIData, setRawAssemblyAIData] = useKV<any | null>('raw-assemblyai-data', null)
   const [transcriptionConfig, setTranscriptionConfig] = useKV<TranscriptionConfig | null>('transcription-config', {
     provider: 'assemblyai',
@@ -77,18 +79,31 @@ function App() {
       setOriginalTranscript(transcriptionResult.transcript)
       setRawAssemblyAIData(transcriptionResult.rawData)
       
-      setCurrentStep('Analyzing conversation with AI (fast mode)...')
+      setCurrentStep('Processing transcript (first 10 exchanges)...')
+      
+      // Process the transcript to truncate and convert to markdown
+      const processed = TranscriptProcessor.processAssemblyAITranscript(transcriptionResult.transcript, 10)
+      setProcessedTranscript(processed)
+      
+      console.log('Transcript processing completed:', {
+        originalLength: processed.originalLength,
+        truncatedLength: processed.truncatedLength,
+        exchangeCount: processed.exchangeCount,
+        truncated: processed.truncated
+      })
+      
+      setCurrentStep('Analyzing conversation with AI (enhanced processing)...')
       console.log('Starting AI analysis...')
       
       let analysisResult
       if (aiProvider === 'openai' && openaiApiKey) {
-        setCurrentStep('Analyzing with OpenAI GPT-3.5-Turbo (fast mode - ~60% faster)...')
-        console.log('Using OpenAI fast mode for enhanced analysis...')
+        setCurrentStep('Analyzing with OpenAI GPT-3.5-Turbo (processed transcript)...')
+        console.log('Using OpenAI with processed transcript for enhanced analysis...')
         analysisResult = await analyzeServiceCallWithOpenAI(transcriptionResult.transcript, openaiApiKey)
-        console.log('OpenAI fast analysis completed successfully')
+        console.log('OpenAI analysis completed successfully')
       } else if (aiProvider === 'gemini' && geminiApiKey) {
-        setCurrentStep('Analyzing with Gemini AI (enhanced stage categorization)...')
-        console.log('Using Gemini AI for enhanced analysis...')
+        setCurrentStep('Analyzing with Gemini AI (processed transcript)...')
+        console.log('Using Gemini AI with processed transcript for enhanced analysis...')
         analysisResult = await analyzeServiceCallWithGemini(transcriptionResult.transcript, geminiApiKey)
         console.log('Gemini analysis completed successfully')
       } else {
@@ -164,9 +179,11 @@ function App() {
   }
 
   const getProgressValue = () => {
-    if (isTranscribing) return 25 // Slightly faster progression
+    if (isTranscribing) return 25 
     if (isAnalyzing) {
-      if (currentStep.includes('fast mode')) return 60 // Show faster progress for fast mode
+      if (currentStep.includes('Processing transcript')) return 35
+      if (currentStep.includes('processed transcript')) return 60
+      if (currentStep.includes('enhanced processing')) return 45
       if (currentStep.includes('Stage 1')) return 35
       if (currentStep.includes('Stage 2')) return 50
       if (currentStep.includes('Stage 3')) return 65
@@ -185,11 +202,14 @@ function App() {
             <p className="text-muted-foreground">Upload a service call recording to analyze technician performance and sales opportunities</p>
             <div className="mt-4 flex justify-center">
               <Badge variant="default" className="bg-green-600">
-                {aiProvider === 'openai' && openaiApiKey ? 'AssemblyAI + OpenAI GPT-3.5-Turbo (Fast)' : 
+                {aiProvider === 'openai' && openaiApiKey ? 'AssemblyAI + OpenAI GPT-3.5-Turbo (Optimized)' : 
                  aiProvider === 'gemini' && geminiApiKey ? 'AssemblyAI + Gemini AI Enhanced' : 
                  'Configure AI Provider Required'}
               </Badge>
             </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              ⚡ Optimized processing: Analyzes first 10 exchanges for reliable, fast results
+            </p>
           </div>
 
           <div className="space-y-6">
@@ -649,7 +669,10 @@ function App() {
                       </Alert>
 
                       <div className="mt-4 pt-4 border-t border-border">
-                        <p className="text-xs text-muted-foreground mb-2">Note: Configure an OpenAI or Gemini API key above, then upload a real audio file to test the complete analysis pipeline. All AI analysis is live - no fallback methods.</p>
+                        <p className="text-xs text-muted-foreground mb-2">
+                          📋 <strong>Optimized Processing:</strong> System automatically processes first 10 exchanges and converts to markdown for reliable AI analysis. 
+                          Configure an OpenAI or Gemini API key above, then upload a real audio file to test the complete pipeline.
+                        </p>
                       </div>
                     </div>
                   )}
@@ -669,16 +692,28 @@ function App() {
             <h1 className="text-3xl font-bold text-foreground">Call Analysis Results</h1>
             <p className="text-muted-foreground">AI-powered performance and sales opportunity assessment</p>
           </div>
-          <Button variant="outline" onClick={() => {
-            setAnalysis(null)
-            setOriginalTranscript(null)
-            setRawAssemblyAIData(null)
-            setError(null)
-            setDebugInfo(null)
-            console.log('Analysis data cleared')
-          }}>
-            Analyze New Call
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => {
+              setAnalysis(null)
+              setOriginalTranscript(null)
+              setProcessedTranscript(null)
+              setRawAssemblyAIData(null)
+              setError(null)
+              setDebugInfo(null)
+              console.log('Analysis data cleared')
+            }}>
+              Analyze New Call
+            </Button>
+            
+            {processedTranscript && (
+              <Button variant="outline" onClick={() => {
+                TranscriptProcessor.downloadMarkdown(processedTranscript)
+              }}>
+                <Download size={16} className="mr-2" />
+                Download Markdown
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -712,7 +747,17 @@ function App() {
                 <p className="flex items-center gap-1">
                   <Clock size={16} />
                   {analysis.transcript.segments.length} exchanges
+                  {processedTranscript?.truncated && (
+                    <Badge variant="outline" className="ml-2 text-xs">
+                      TRUNCATED
+                    </Badge>
+                  )}
                 </p>
+                {processedTranscript && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {processedTranscript.summary}
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -935,7 +980,12 @@ function App() {
           </TabsContent>
 
           <TabsContent value="debug">
-            <DebugPanel analysis={analysis} transcript={originalTranscript || undefined} rawAssemblyAI={rawAssemblyAIData || undefined} />
+            <DebugPanel 
+              analysis={analysis} 
+              transcript={originalTranscript || undefined} 
+              processedTranscript={processedTranscript || undefined} 
+              rawAssemblyAI={rawAssemblyAIData || undefined} 
+            />
           </TabsContent>
         </Tabs>
       </div>

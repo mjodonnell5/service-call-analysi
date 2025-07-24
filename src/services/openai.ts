@@ -276,6 +276,140 @@ export class OpenAIAnalyzer {
     return data.choices[0].message.content
   }
 
+  /**
+   * Parse markdown transcript into structured segments
+   */
+  private async parseMarkdownTranscript(markdown: string): Promise<any[]> {
+    console.log('Parsing markdown transcript into segments...')
+    
+    const lines = markdown.split('\n')
+    const segments: any[] = []
+    let currentSpeaker = ''
+    let currentText = ''
+    let currentTimestamp = ''
+    let exchangeIndex = 0
+    
+    for (const line of lines) {
+      const trimmed = line.trim()
+      
+      // Skip empty lines and markdown formatting
+      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('**') || trimmed === '---') {
+        continue
+      }
+      
+      // Check for exchange headers like "### Exchange 1: Technician"
+      const exchangeMatch = trimmed.match(/^### Exchange \d+: (Technician|Customer)/)
+      if (exchangeMatch) {
+        // Save previous segment if exists
+        if (currentSpeaker && currentText.trim()) {
+          segments.push({
+            speaker: currentSpeaker,
+            text: currentText.trim(),
+            timestamp: currentTimestamp || `${Math.floor(exchangeIndex * 0.5)}:${(exchangeIndex * 30 % 60).toString().padStart(2, '0')}`,
+            stage: this.determineStage(currentText, exchangeIndex, segments.length)
+          })
+          exchangeIndex++
+        }
+        
+        // Start new segment
+        currentSpeaker = exchangeMatch[1]
+        currentText = ''
+        currentTimestamp = ''
+        continue
+      }
+      
+      // Check for timestamp lines like "**Time:** 1:30"
+      const timeMatch = trimmed.match(/^\*\*Time:\*\* (.+)/)
+      if (timeMatch) {
+        currentTimestamp = timeMatch[1]
+        continue
+      }
+      
+      // Regular content line - add to current text
+      if (currentSpeaker && trimmed) {
+        if (currentText) currentText += ' '
+        currentText += trimmed
+      }
+    }
+    
+    // Don't forget the last segment
+    if (currentSpeaker && currentText.trim()) {
+      segments.push({
+        speaker: currentSpeaker,
+        text: currentText.trim(),
+        timestamp: currentTimestamp || `${Math.floor(exchangeIndex * 0.5)}:${(exchangeIndex * 30 % 60).toString().padStart(2, '0')}`,
+        stage: this.determineStage(currentText, exchangeIndex, segments.length)
+      })
+    }
+    
+    console.log(`Parsed ${segments.length} segments from markdown`)
+    console.log('Sample parsed segments:', segments.slice(0, 2).map(s => ({
+      speaker: s.speaker,
+      timestamp: s.timestamp,
+      stage: s.stage,
+      text_preview: s.text.substring(0, 100) + '...'
+    })))
+    
+    return segments
+  }
+
+  /**
+   * Determine the likely stage for a text segment based on content and position
+   */
+  private determineStage(text: string, index: number, totalSegments: number): string {
+    const lowerText = text.toLowerCase()
+    const position = totalSegments > 0 ? index / Math.max(totalSegments - 1, 1) : 0
+    
+    // Introduction indicators
+    if (lowerText.includes('hello') || lowerText.includes('good morning') || 
+        lowerText.includes('this is') || lowerText.includes('from') ||
+        index === 0) {
+      return 'introduction'
+    }
+    
+    // Closing indicators
+    if (lowerText.includes('thank you') || lowerText.includes('goodbye') || 
+        lowerText.includes('take care') || lowerText.includes('have a') ||
+        position > 0.8) {
+      return 'closing'
+    }
+    
+    // Problem diagnosis indicators
+    if (lowerText.includes('problem') || lowerText.includes('issue') || 
+        lowerText.includes('not working') || lowerText.includes('broken') ||
+        lowerText.includes('what seems')) {
+      return 'diagnosis'
+    }
+    
+    // Solution indicators
+    if (lowerText.includes('fix') || lowerText.includes('repair') || 
+        lowerText.includes('replace') || lowerText.includes('solution') ||
+        lowerText.includes('install')) {
+      return 'solution'
+    }
+    
+    // Upsell indicators
+    if (lowerText.includes('additional') || lowerText.includes('upgrade') || 
+        lowerText.includes('also recommend') || lowerText.includes('better option') ||
+        lowerText.includes('premium')) {
+      return 'upsell'
+    }
+    
+    // Maintenance indicators
+    if (lowerText.includes('maintenance') || lowerText.includes('service plan') || 
+        lowerText.includes('regular') || lowerText.includes('annual') ||
+        lowerText.includes('prevent')) {
+      return 'maintenance'
+    }
+    
+    // Default based on position
+    if (position < 0.2) return 'introduction'
+    if (position < 0.4) return 'diagnosis'
+    if (position < 0.6) return 'solution'
+    if (position < 0.8) return 'upsell'
+    return 'closing'
+  }
+
   async segmentTranscript(transcript: string): Promise<any[]> {
     if (!transcript || transcript.trim().length === 0) {
       console.warn('Empty transcript provided to segmentTranscript')
@@ -1023,7 +1157,7 @@ ${chunk.substring(0, 3000)}`
     })
   }
 
-  async analyzeCombined(segments: any[]): Promise<{
+  async analyzeCombined(segments: any[], markdownContext?: string): Promise<{
     compliance: CallAnalysis['compliance'],
     salesInsights: CallAnalysis['salesInsights']
   }> {
@@ -1054,7 +1188,7 @@ RULES:
 - ONLY return JSON - no markdown, no explanations
 - Arrays can be empty []
 
-Call segments: ${JSON.stringify(limitedSegments)}`
+Call segments: ${JSON.stringify(limitedSegments)}${markdownContext ? `\n\nOriginal transcript note: Analysis is based on first 10 exchanges (truncated for processing).` : ''}`
 
     const messages = [
       { 
@@ -1354,27 +1488,28 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
     }
   }
 
-  async analyzeServiceCall(transcript: string): Promise<CallAnalysis> {
-    if (!transcript || transcript.trim().length === 0) {
+  async analyzeServiceCall(markdownTranscript: string): Promise<CallAnalysis> {
+    if (!markdownTranscript || markdownTranscript.trim().length === 0) {
       throw new Error('Empty transcript provided')
     }
 
-    console.log('=== OpenAI Analysis Starting ===')
-    console.log('Input transcript length:', transcript.length)
-    console.log('Input preview (first 500 chars):', transcript.substring(0, 500))
-    console.log('Contains speaker labels:', transcript.includes('Technician:') || transcript.includes('Customer:'))
-    console.log('Number of lines:', transcript.split('\n').length)
+    console.log('=== OpenAI Analysis Starting (Markdown Mode) ===')
+    console.log('Input markdown length:', markdownTranscript.length)
+    console.log('Input preview (first 500 chars):', markdownTranscript.substring(0, 500))
+    console.log('Contains markdown headers:', markdownTranscript.includes('###') || markdownTranscript.includes('##'))
+    console.log('Contains speaker labels:', markdownTranscript.includes('Technician') || markdownTranscript.includes('Customer'))
+    console.log('Number of lines:', markdownTranscript.split('\n').length)
 
     try {
-      console.log('Starting fast OpenAI analysis...')
+      console.log('Starting fast OpenAI analysis with markdown input...')
       
-      // Step 1: Fast segmentation
-      console.log('Step 1: Fast transcript segmentation...')
-      const segments = await this.segmentTranscript(transcript)
-      console.log(`Segmented into ${segments.length} parts`)
+      // Step 1: Parse markdown into segments  
+      console.log('Step 1: Parsing markdown transcript...')
+      const segments = await this.parseMarkdownTranscript(markdownTranscript)
+      console.log(`Parsed into ${segments.length} segments`)
       
       if (segments.length === 0) {
-        throw new Error('No segments generated from transcript')
+        throw new Error('No segments generated from markdown transcript')
       }
       
       // Debug: Show sample segments
@@ -1390,9 +1525,9 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
       }, {} as Record<string, number>)
       console.log('Stage distribution:', stageDistribution)
 
-      // Step 2: Combined fast analysis
-      console.log('Step 2: Combined compliance and sales analysis...')
-      const combined = await this.analyzeCombined(segments)
+      // Step 2: Combined fast analysis with markdown context
+      console.log('Step 2: AI analysis of parsed segments...')
+      const combined = await this.analyzeCombined(segments, markdownTranscript)
       const compliance = combined.compliance
       const salesInsights = combined.salesInsights
       
@@ -1418,7 +1553,7 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
       const overallScore = Math.round(complianceScores.reduce((a, b) => a + b, 0) / complianceScores.length)
 
       // Quick call type determination
-      const text = transcript.toLowerCase()
+      const text = markdownTranscript.toLowerCase()
       let callType = 'Service Call'
       if (text.includes('repair') || text.includes('fix') || text.includes('broken')) callType = 'Repair Call'
       else if (text.includes('install')) callType = 'Installation Call'

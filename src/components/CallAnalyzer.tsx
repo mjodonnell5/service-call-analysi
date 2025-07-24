@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { transcriptionService, TranscriptionConfig, TranscriptionResult } from '@/services/transcription'
 import { createGeminiAnalyzer, GeminiAnalysisResult } from '@/services/gemini'
 import { OpenAIAnalyzer } from '@/services/openai'
+import { TranscriptProcessor } from '@/services/transcript-processor'
 
 interface AnalysisResult {
   callType: string
@@ -29,7 +30,7 @@ interface AnalysisResult {
   }
 }
 
-// Enhanced analysis using OpenAI API for better stage categorization and analysis
+// Enhanced analysis using OpenAI API with transcript processing and markdown conversion
 export async function analyzeServiceCallWithOpenAI(transcript: string, openaiApiKey: string): Promise<AnalysisResult> {
   if (!transcript || transcript.trim().length === 0) {
     throw new Error('Empty transcript provided for analysis')
@@ -39,13 +40,26 @@ export async function analyzeServiceCallWithOpenAI(transcript: string, openaiApi
     throw new Error('OpenAI API key is required for enhanced analysis')
   }
 
-  console.log('Starting OpenAI analysis of transcript...')
-  console.log('Transcript length:', transcript.length, 'characters')
+  console.log('Starting OpenAI analysis with transcript processing...')
+  console.log('Original transcript length:', transcript.length, 'characters')
   console.log('Using API key:', openaiApiKey.substring(0, 8) + '...')
   
   try {
+    // Step 1: Process and truncate the AssemblyAI transcript
+    console.log('Processing AssemblyAI transcript (truncating to first 10 exchanges)...')
+    const processedTranscript = TranscriptProcessor.processAssemblyAITranscript(transcript, 10)
+    
+    console.log('Transcript processing completed:')
+    console.log(`- Original length: ${processedTranscript.originalLength} chars`)
+    console.log(`- Processed length: ${processedTranscript.truncatedLength} chars`)
+    console.log(`- Exchange count: ${processedTranscript.exchangeCount}`)
+    console.log(`- Was truncated: ${processedTranscript.truncated}`)
+    console.log(`- Summary: ${processedTranscript.summary}`)
+    
+    // Step 2: Analyze the markdown transcript with OpenAI
+    console.log('Analyzing processed markdown with OpenAI...')
     const openaiAnalyzer = new OpenAIAnalyzer(openaiApiKey)
-    const result = await openaiAnalyzer.analyzeServiceCall(transcript)
+    const result = await openaiAnalyzer.analyzeServiceCall(processedTranscript.markdown)
     
     console.log('OpenAI analysis completed successfully')
     console.log('Final result segments:', result.transcript.segments.length)

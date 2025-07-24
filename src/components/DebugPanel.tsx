@@ -3,16 +3,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Bug, Download, Eye, Code, Microphone } from '@phosphor-icons/react'
+import { Bug, Download, Eye, Code, Microphone, FileText } from '@phosphor-icons/react'
 import { useState } from 'react'
+import { ProcessedTranscript, TranscriptProcessor } from '@/services/transcript-processor'
 
 interface DebugPanelProps {
   analysis: any
   transcript?: string
+  processedTranscript?: ProcessedTranscript
   rawAssemblyAI?: any
 }
 
-export function DebugPanel({ analysis, transcript, rawAssemblyAI }: DebugPanelProps) {
+export function DebugPanel({ analysis, transcript, processedTranscript, rawAssemblyAI }: DebugPanelProps) {
   const [showRaw, setShowRaw] = useState(false)
   
   const downloadDebugData = () => {
@@ -20,6 +22,7 @@ export function DebugPanel({ analysis, transcript, rawAssemblyAI }: DebugPanelPr
       timestamp: new Date().toISOString(),
       analysis,
       transcript,
+      processedTranscript,
       rawAssemblyAI,
       stageDistribution: getStageDistribution(),
       segmentStats: getSegmentStats()
@@ -95,8 +98,9 @@ export function DebugPanel({ analysis, transcript, rawAssemblyAI }: DebugPanelPr
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="processed">Processed</TabsTrigger>
             <TabsTrigger value="stages">Stage Analysis</TabsTrigger>
             <TabsTrigger value="segments">Segments</TabsTrigger>
             <TabsTrigger value="assemblyai">AssemblyAI Raw</TabsTrigger>
@@ -189,6 +193,111 @@ export function DebugPanel({ analysis, transcript, rawAssemblyAI }: DebugPanelPr
                 <AlertDescription>
                   <strong>Empty Segments Found:</strong> {segmentStats.emptySegments} segments have no text content.
                   This may indicate parsing issues with the transcript.
+                </AlertDescription>
+              </Alert>
+            )}
+          </TabsContent>
+
+          <TabsContent value="processed" className="space-y-4">
+            {processedTranscript ? (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <FileText size={16} />
+                        Processing Statistics
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-sm">Original Length:</span>
+                        <Badge variant="outline">{processedTranscript.originalLength.toLocaleString()} chars</Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm">Processed Length:</span>
+                        <Badge variant="outline">{processedTranscript.truncatedLength.toLocaleString()} chars</Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm">Exchange Count:</span>
+                        <Badge variant="outline">{processedTranscript.exchangeCount}</Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm">Was Truncated:</span>
+                        <Badge variant={processedTranscript.truncated ? "destructive" : "default"}>
+                          {processedTranscript.truncated ? 'Yes' : 'No'}
+                        </Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-sm">Processing Benefits</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {(() => {
+                        const stats = TranscriptProcessor.getProcessingStats(processedTranscript)
+                        return (
+                          <>
+                            <div className="flex justify-between">
+                              <span className="text-sm">Size Reduction:</span>
+                              <Badge variant="secondary">{stats.compressionRatio}</Badge>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-sm">Exchange Density:</span>
+                              <Badge variant="outline">{stats.exchangeDensity}</Badge>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-sm">Avg Exchange Length:</span>
+                              <Badge variant="outline">{stats.avgExchangeLength}</Badge>
+                            </div>
+                          </>
+                        )
+                      })()}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Processing Summary</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground">{processedTranscript.summary}</p>
+                    
+                    <div className="mt-4 flex gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => TranscriptProcessor.downloadMarkdown(processedTranscript)}
+                        className="flex items-center gap-1"
+                      >
+                        <Download size={14} />
+                        Download Markdown
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Processed Markdown Preview</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="max-h-64 overflow-y-auto p-3 bg-muted rounded-md">
+                      <pre className="text-xs whitespace-pre-wrap font-mono">
+                        {processedTranscript.markdown.substring(0, 2000)}
+                        {processedTranscript.markdown.length > 2000 && '\n\n... [Preview truncated. Download full markdown to see complete content]'}
+                      </pre>
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            ) : (
+              <Alert>
+                <AlertDescription>
+                  No processed transcript data available. This may indicate the analysis was performed with an older version of the system.
                 </AlertDescription>
               </Alert>
             )}

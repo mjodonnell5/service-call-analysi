@@ -195,7 +195,7 @@ function App() {
             </div>
           </div>
 
-            <div className="space-y-6">
+          <div className="space-y-6">
               <Card className="max-w-md mx-auto">
                 <CardHeader className="text-center">
                   <CardTitle className="flex items-center justify-center gap-2">
@@ -569,7 +569,7 @@ function App() {
                                )}
 
                                {aiProvider === 'gemini' && (
-                                <div>
+                                 <div>
                                   <label className="text-xs text-muted-foreground">Gemini API Key (Free Tier):</label>
                                   <div className="flex gap-2 mt-1">
                                     <input

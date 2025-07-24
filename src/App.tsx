@@ -55,19 +55,44 @@ function App() {
     setIsAnalyzing(true)
     
     try {
+      console.log('Starting file upload process...')
       setCurrentStep('Transcribing audio...')
-      const transcript = await transcribeAudio(file)
       
-      setCurrentStep('Analyzing conversation...')
+      const transcript = await transcribeAudio(file)
+      console.log('Transcription completed, length:', transcript.length)
+      
+      setCurrentStep('Analyzing conversation with AI...')
+      console.log('Starting AI analysis...')
+      
       const analysisResult = await analyzeServiceCall(transcript)
+      console.log('Analysis completed successfully')
       
       setAnalysis(analysisResult)
       setCurrentStep('')
+      console.log('Analysis saved to state')
     } catch (err) {
       console.error('Full error details:', err)
       const errorMessage = err instanceof Error ? err.message : 'Analysis failed with unknown error'
       setError(`Analysis Error: ${errorMessage}`)
-      setDebugInfo(err instanceof Error ? err.stack || 'No stack trace available' : 'Unknown error type')
+      
+      // Enhanced debug info
+      let debugDetails = ''
+      if (err instanceof Error) {
+        debugDetails = `Error: ${err.message}\n\nStack Trace:\n${err.stack || 'No stack trace available'}`
+        
+        // Add additional context if available
+        if (err.message.includes('JSON')) {
+          debugDetails += '\n\nThis appears to be a JSON parsing error. The AI service may have returned invalid JSON.'
+        } else if (err.message.includes('AI service')) {
+          debugDetails += '\n\nThis appears to be an AI service error. The Spark AI service may be temporarily unavailable.'
+        } else if (err.message.includes('transcription')) {
+          debugDetails += '\n\nThis appears to be a transcription error. Check the audio file format and size.'
+        }
+      } else {
+        debugDetails = `Unknown error type: ${typeof err}\nValue: ${String(err)}`
+      }
+      
+      setDebugInfo(debugDetails)
     } finally {
       setIsAnalyzing(false)
     }
@@ -163,6 +188,48 @@ function App() {
                       <strong>AI-Powered Analysis:</strong> This tool uses advanced AI to transcribe and analyze service calls, identifying compliance issues and sales opportunities.
                     </AlertDescription>
                   </Alert>
+                  
+                  <div className="mt-4 pt-4 border-t border-border">
+                    <p className="text-xs text-muted-foreground mb-2">For testing purposes:</p>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={async () => {
+                        setError(null)
+                        setDebugInfo(null)
+                        setIsAnalyzing(true)
+                        setCurrentStep('Running test analysis...')
+                        
+                        try {
+                          const testTranscript = `Technician: Good morning! This is Mike from AirFlow Solutions.
+Customer: Hello, thank you for coming out.
+Technician: What seems to be the problem with your air conditioning?
+Customer: It stopped working yesterday.
+Technician: I found the issue. It's the compressor. I can fix it for $485.
+Customer: Okay, that sounds reasonable.
+Technician: I can also offer you a maintenance plan for $199 annually.
+Customer: Let me think about that.
+Technician: All done! Your system is working perfectly now.
+Customer: Thank you so much!
+Technician: You're welcome! Have a great day!`
+                          
+                          const analysisResult = await analyzeServiceCall(testTranscript)
+                          setAnalysis(analysisResult)
+                          setCurrentStep('')
+                        } catch (err) {
+                          console.error('Test analysis error:', err)
+                          const errorMessage = err instanceof Error ? err.message : 'Test analysis failed'
+                          setError(`Test Analysis Error: ${errorMessage}`)
+                          setDebugInfo(err instanceof Error ? err.stack || 'No stack trace available' : 'Unknown error type')
+                        } finally {
+                          setIsAnalyzing(false)
+                        }
+                      }}
+                      className="w-full"
+                    >
+                      Test AI Analysis (Demo)
+                    </Button>
+                  </div>
                 </div>
               )}
             </CardContent>

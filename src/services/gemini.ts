@@ -40,6 +40,16 @@ export class GeminiAnalyzer {
   }
 
   private async callGemini(prompt: string): Promise<string> {
+    // Validate API key format
+    if (!this.config.apiKey || this.config.apiKey.trim().length === 0) {
+      throw new Error('Gemini API key is required')
+    }
+    
+    // Basic API key format validation for Google AI Studio keys
+    if (!this.config.apiKey.startsWith('AIza') || this.config.apiKey.length < 35) {
+      throw new Error('Invalid Gemini API key format. Please check your API key.')
+    }
+    
     const url = `${this.baseUrl}/${this.config.model}:generateContent?key=${this.config.apiKey}`
     
     // Check prompt length and truncate if necessary (more conservative limit)
@@ -50,48 +60,78 @@ export class GeminiAnalyzer {
       truncatedPrompt = prompt.substring(0, maxPromptLength) + "\n\n[Transcript truncated due to length...]"
     }
     
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: truncatedPrompt
-          }]
-        }],
-        generationConfig: {
-          temperature: 0.1,
-          topK: 1,
-          topP: 0.95,
-          maxOutputTokens: 2000, // Increased for complete responses
+    console.log(`Making Gemini API request to: ${this.baseUrl}/${this.config.model}:generateContent`)
+    console.log(`Using API key: ${this.config.apiKey.substring(0, 8)}...${this.config.apiKey.substring(this.config.apiKey.length - 4)}`)
+    
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        safetySettings: [
-          {
-            category: "HARM_CATEGORY_HARASSMENT",
-            threshold: "BLOCK_NONE"
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: truncatedPrompt
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            topK: 1,
+            topP: 0.95,
+            maxOutputTokens: 2000, // Increased for complete responses
           },
-          {
-            category: "HARM_CATEGORY_HATE_SPEECH", 
-            threshold: "BLOCK_NONE"
-          },
-          {
-            category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-            threshold: "BLOCK_NONE"
-          },
-          {
-            category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-            threshold: "BLOCK_NONE"
-          }
-        ]
+          safetySettings: [
+            {
+              category: "HARM_CATEGORY_HARASSMENT",
+              threshold: "BLOCK_NONE"
+            },
+            {
+              category: "HARM_CATEGORY_HATE_SPEECH", 
+              threshold: "BLOCK_NONE"
+            },
+            {
+              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+              threshold: "BLOCK_NONE"
+            },
+            {
+              category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+              threshold: "BLOCK_NONE"
+            }
+          ]
+        })
       })
-    })
 
-    if (!response.ok) {
-      const error = await response.text()
-      console.error('Gemini API error response:', error)
-      throw new Error(`Gemini API error: ${response.status} - ${error}`)
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Gemini API error response:', {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText
+        })
+        
+        // Provide more specific error messages
+        if (response.status === 400) {
+          if (errorText.includes('API_KEY_INVALID') || errorText.includes('invalid API key')) {
+            throw new Error('Invalid Gemini API key. Please check your API key is correct.')
+          } else if (errorText.includes('quota') || errorText.includes('QUOTA_EXCEEDED')) {
+            throw new Error('Gemini API quota exceeded. Please check your billing and usage limits.')
+          } else {
+            throw new Error(`Gemini API request error: ${errorText}`)
+          }
+        } else if (response.status === 403) {
+          throw new Error('Gemini API access forbidden. Check your API key permissions and billing status.')
+        } else if (response.status === 429) {
+          throw new Error('Gemini API rate limit exceeded. Please wait before trying again.')
+        } else {
+          throw new Error(`Gemini API error: ${response.status} - ${errorText}`)
+        }
+      }
+    } catch (networkError) {
+      if (networkError instanceof TypeError && networkError.message.includes('fetch')) {
+        throw new Error('Network error accessing Gemini API. Please check your internet connection.')
+      }
+      throw networkError // Re-throw if it's already a handled error
     }
 
     const data = await response.json()
@@ -208,12 +248,19 @@ REQUIREMENTS:
       if (error instanceof Error) {
         errorMessage = error.message
         
-        if (errorMessage.includes('JSON') || errorMessage.includes('parse')) {
+        // Don't modify the error message if it's already descriptive
+        if (errorMessage.includes('Invalid Gemini API key') || 
+            errorMessage.includes('quota exceeded') ||
+            errorMessage.includes('access forbidden') ||
+            errorMessage.includes('rate limit') ||
+            errorMessage.includes('Network error')) {
+          // Keep the original message - it's already descriptive
+        } else if (errorMessage.includes('JSON') || errorMessage.includes('parse')) {
           errorMessage = 'Failed to parse Gemini response: Invalid JSON format'
-        } else if (errorMessage.includes('API error')) {
-          errorMessage = 'Gemini API error: Check your API key and quota'
         } else if (errorMessage.includes('safety')) {
           errorMessage = 'Content blocked by Gemini safety filters'
+        } else if (errorMessage.includes('API error') && !errorMessage.includes('Check your API key')) {
+          errorMessage = 'Gemini API error: Check your API key and quota'
         }
       }
       

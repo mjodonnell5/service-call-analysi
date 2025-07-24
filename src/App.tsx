@@ -103,18 +103,35 @@ function App() {
       const errorMessage = err instanceof Error ? err.message : 'Analysis failed with unknown error'
       setError(`Analysis Error: ${errorMessage}`)
       
-      // Enhanced debug info
+      // Enhanced debug info with suggestions
       let debugDetails = ''
       if (err instanceof Error) {
         debugDetails = `Error: ${err.message}\n\nStack Trace:\n${err.stack || 'No stack trace available'}`
         
-        // Add additional context if available
-        if (err.message.includes('JSON')) {
-          debugDetails += '\n\nThis appears to be a JSON parsing error. The AI service may have returned invalid JSON.'
-        } else if (err.message.includes('AI service')) {
-          debugDetails += '\n\nThis appears to be an AI service error. The Spark AI service may be temporarily unavailable.'
+        // Add specific context and suggestions based on error type
+        if (err.message.includes('Invalid Gemini API key')) {
+          debugDetails += '\n\nSUGGESTION: Your Gemini API key appears to be invalid. Please:'
+          debugDetails += '\n1. Check that your API key starts with "AIza"'
+          debugDetails += '\n2. Ensure you copied the full key from Google AI Studio'
+          debugDetails += '\n3. Try the "Test" button to verify your API key'
+        } else if (err.message.includes('quota') || err.message.includes('billing')) {
+          debugDetails += '\n\nSUGGESTION: Your Gemini API quota may be exceeded. Please:'
+          debugDetails += '\n1. Check your usage at https://aistudio.google.com/'
+          debugDetails += '\n2. Verify your billing settings'
+          debugDetails += '\n3. Try again later if you hit rate limits'
+        } else if (err.message.includes('JSON')) {
+          debugDetails += '\n\nSUGGESTION: This appears to be a JSON parsing error from Gemini.'
+          debugDetails += '\n1. Try using Spark AI instead (uncheck Gemini AI option)'
+          debugDetails += '\n2. The Gemini response may have been malformed'
+        } else if (err.message.includes('Network error')) {
+          debugDetails += '\n\nSUGGESTION: Network connection issue.'
+          debugDetails += '\n1. Check your internet connection'
+          debugDetails += '\n2. Try again in a few moments'
         } else if (err.message.includes('transcription')) {
-          debugDetails += '\n\nThis appears to be a transcription error. Check the audio file format and size.'
+          debugDetails += '\n\nSUGGESTION: This appears to be a transcription error.'
+          debugDetails += '\n1. Check that your audio file is supported (MP3, WAV, MP4, etc.)'
+          debugDetails += '\n2. Ensure file size is under 50MB'
+          debugDetails += '\n3. Try the demo button for testing'
         }
       } else {
         debugDetails = `Unknown error type: ${typeof err}\nValue: ${String(err)}`
@@ -250,13 +267,58 @@ function App() {
                               {useGeminiAnalysis && (
                                 <div>
                                   <label className="text-xs text-muted-foreground">Gemini API Key:</label>
-                                  <input
-                                    type="password"
-                                    value={geminiApiKey || ''}
-                                    onChange={(e) => setGeminiApiKey(e.target.value)}
-                                    placeholder="Enter Gemini API key"
-                                    className="w-full mt-1 px-2 py-1 text-xs border rounded"
-                                  />
+                                  <div className="flex gap-2 mt-1">
+                                    <input
+                                      type="password"
+                                      value={geminiApiKey || ''}
+                                      onChange={(e) => setGeminiApiKey(e.target.value)}
+                                      placeholder="Enter Gemini API key"
+                                      className="flex-1 px-2 py-1 text-xs border rounded"
+                                    />
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={async () => {
+                                        if (!geminiApiKey || geminiApiKey.trim().length === 0) {
+                                          setError('Please enter a Gemini API key first')
+                                          return
+                                        }
+                                        
+                                        setError(null)
+                                        setDebugInfo(null)
+                                        
+                                        try {
+                                          setCurrentStep('Testing Gemini API connection...')
+                                          console.log('Testing Gemini API key...')
+                                          
+                                          const { createGeminiAnalyzer } = await import('@/services/gemini')
+                                          const analyzer = createGeminiAnalyzer(geminiApiKey)
+                                          
+                                          // Test with a very simple prompt
+                                          await analyzer.analyzeServiceCall('Technician: Hello, this is a test. Customer: Thank you.')
+                                          
+                                          setCurrentStep('✅ Gemini API key is valid!')
+                                          setTimeout(() => setCurrentStep(''), 3000)
+                                          
+                                        } catch (err) {
+                                          console.error('Gemini API test failed:', err)
+                                          const errorMessage = err instanceof Error ? err.message : 'API test failed'
+                                          setError(`API Test Failed: ${errorMessage}`)
+                                          setCurrentStep('')
+                                          
+                                          if (err instanceof Error && err.message.includes('Invalid Gemini API key')) {
+                                            setDebugInfo('Please check that your API key is correct and has the format: AIzaSy...')
+                                          } else if (err instanceof Error && err.message.includes('quota')) {
+                                            setDebugInfo('Your Gemini API quota may be exceeded. Check your Google AI Studio billing and usage.')
+                                          }
+                                        }
+                                      }}
+                                      disabled={!geminiApiKey || geminiApiKey.trim().length === 0}
+                                      className="text-xs"
+                                    >
+                                      Test
+                                    </Button>
+                                  </div>
                                 </div>
                               )}
                               
@@ -347,7 +409,21 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
                               console.error('Test analysis error:', err)
                               const errorMessage = err instanceof Error ? err.message : 'Test analysis failed'
                               setError(`Test Analysis Error: ${errorMessage}`)
-                              setDebugInfo(err instanceof Error ? err.stack || 'No stack trace available' : 'Unknown error type')
+                              
+                              let debugDetails = ''
+                              if (err instanceof Error) {
+                                debugDetails = `Error: ${err.message}\n\nStack Trace:\n${err.stack || 'No stack trace available'}`
+                                
+                                if (err.message.includes('Invalid Gemini API key')) {
+                                  debugDetails += '\n\nSUGGESTION: API key validation failed. Use the "Test" button first.'
+                                } else if (err.message.includes('quota')) {
+                                  debugDetails += '\n\nSUGGESTION: Check your Gemini API quota at https://aistudio.google.com/'
+                                }
+                              } else {
+                                debugDetails = 'Unknown error type'
+                              }
+                              
+                              setDebugInfo(debugDetails)
                             } finally {
                               setIsAnalyzing(false)
                             }

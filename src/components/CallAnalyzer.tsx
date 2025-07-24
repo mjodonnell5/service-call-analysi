@@ -586,25 +586,26 @@ function createFallbackAnalysis(transcript: string, error: any): AnalysisResult 
   const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
   
   return {
-    callType: "Service Call",
+    callType: "Service Call (Manual Analysis)",
     overallScore: 75,
     compliance: {
-      introduction: { present: true, quality: "Good", notes: `Manual review shows proper introduction appears present.` },
-      diagnosis: { present: true, quality: "Good", notes: "Manual review recommended for diagnosis quality assessment." },
-      solution: { present: true, quality: "Good", notes: "Solution explanation appears to be provided based on transcript structure." },
-      upsell: { present: true, quality: "Fair", notes: "Some upselling attempts visible in transcript." },
-      maintenance: { present: true, quality: "Good", notes: "Maintenance plan discussion appears in transcript." },
-      closing: { present: true, quality: "Good", notes: "Professional closing appears present." }
+      introduction: { present: true, quality: "Good", notes: `Basic analysis shows introduction appears present. AI analysis failed: ${errorMessage}` },
+      diagnosis: { present: true, quality: "Good", notes: "Basic analysis suggests diagnosis stage present. Full AI analysis failed - manual review recommended." },
+      solution: { present: true, quality: "Good", notes: "Basic analysis indicates solution explanation provided. AI analysis failed - verify details manually." },
+      upsell: { present: true, quality: "Fair", notes: "Basic analysis shows some upselling attempts. AI analysis failed - verify sales performance manually." },
+      maintenance: { present: true, quality: "Good", notes: "Basic analysis indicates maintenance discussion present. AI analysis failed - manual review needed." },
+      closing: { present: true, quality: "Good", notes: "Basic analysis shows professional closing present. AI analysis failed - verify closing quality manually." }
     },
     salesInsights: {
       opportunities: [
-        "Transcript suggests potential for additional service discussions"
+        "AI analysis failed - manual transcript review needed for opportunity identification",
+        `Error: ${errorMessage}`
       ],
       successful: [
-        "Basic service delivery completed (based on transcript pattern)"
+        "Basic service delivery appears completed (AI analysis failed - verify manually)"
       ],
       missed: [
-        "Manual review recommended for comprehensive sales assessment"
+        "AI analysis failed - comprehensive manual review required for missed opportunity assessment"
       ]
     },
     transcript: {

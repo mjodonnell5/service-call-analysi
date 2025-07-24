@@ -69,12 +69,37 @@ export class OpenAIAnalyzer {
       } catch {}
     }
     
-    // Aggressive extraction
+    // Handle truncated JSON - try to fix common issues
     const firstBrace = cleaned.indexOf('{')
     const firstBracket = cleaned.indexOf('[')
     const lastBrace = cleaned.lastIndexOf('}')
     const lastBracket = cleaned.lastIndexOf(']')
     
+    // Try to repair truncated array
+    if (firstBracket !== -1 && cleaned.includes('"speaker"') && cleaned.includes('"text"')) {
+      const arrayStart = cleaned.indexOf('[')
+      let candidate = cleaned.substring(arrayStart)
+      
+      // Remove incomplete trailing elements
+      const lastCompleteObject = candidate.lastIndexOf('}')
+      if (lastCompleteObject !== -1) {
+        candidate = candidate.substring(0, lastCompleteObject + 1)
+        
+        // Ensure proper array closure
+        if (!candidate.endsWith(']')) {
+          candidate = candidate + ']'
+        }
+        
+        try {
+          JSON.parse(candidate)
+          return candidate
+        } catch (error) {
+          console.log('Repair attempt failed:', error)
+        }
+      }
+    }
+    
+    // Standard extraction fallback
     if (firstBrace !== -1 && lastBrace !== -1 && firstBrace < lastBrace) {
       const objectCandidate = cleaned.substring(firstBrace, lastBrace + 1)
       try {
@@ -95,7 +120,7 @@ export class OpenAIAnalyzer {
   }
 
   private async makeRequest(messages: any[], temperature = 0.3, fastMode = true): Promise<any> {
-    // Use faster model for most operations
+    // Use faster model for most operations but increase token limits
     const model = fastMode ? 'gpt-3.5-turbo' : 'gpt-4o-mini'
     
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -108,7 +133,7 @@ export class OpenAIAnalyzer {
         model,
         messages,
         temperature,
-        max_tokens: fastMode ? 2000 : 4000
+        max_tokens: fastMode ? 4000 : 4000 // Increased token limits
       })
     })
 
@@ -136,6 +161,14 @@ export class OpenAIAnalyzer {
   }
 
   async segmentTranscript(transcript: string): Promise<any[]> {
+    // If transcript is very long, break it into smaller chunks
+    const maxInputLength = 6000
+    
+    if (transcript.length > maxInputLength) {
+      console.log(`Transcript too long (${transcript.length} chars), processing in chunks...`)
+      return await this.segmentTranscriptInChunks(transcript, maxInputLength)
+    }
+    
     const prompt = `Analyze this service call transcript and return a JSON array. Each element needs: speaker, timestamp, text, stage.
 
 IMPORTANT SPEAKER IDENTIFICATION:
@@ -146,45 +179,141 @@ IMPORTANT SPEAKER IDENTIFICATION:
 
 Stages: introduction, diagnosis, solution, upsell, maintenance, closing
 
-Return only valid JSON array starting with [ and ending with ]:
+Return ONLY a valid JSON array starting with [ and ending with ]. NO extra text, no explanations:
 
-${transcript.length > 8000 ? transcript.substring(0, 8000) + '...[truncated]' : transcript}`
+${transcript}`
 
     const messages = [
       { 
         role: 'system', 
-        content: 'You are an expert at analyzing service call transcripts. Return only JSON arrays with accurate speaker identification. No markdown, no explanations.' 
+        content: 'You are an expert at analyzing service call transcripts. Return only JSON arrays with accurate speaker identification. No markdown, no explanations, no text outside the JSON array.' 
       },
       { role: 'user', content: prompt }
     ]
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        console.log(`Fast segmentation attempt ${attempt}/2`)
+        console.log(`Segmentation attempt ${attempt}/3`)
         const response = await this.makeRequest(messages, 0.1, true)
         
         const cleanedResponse = this.cleanJsonResponse(response)
         const segments = JSON.parse(cleanedResponse)
         
         if (!Array.isArray(segments) || segments.length === 0) {
-          throw new Error('Invalid segments returned')
+          throw new Error('Invalid segments returned - not an array or empty')
+        }
+        
+        // Validate segment structure
+        const validSegments = segments.filter(seg => 
+          seg && typeof seg.speaker === 'string' && typeof seg.text === 'string'
+        )
+        
+        if (validSegments.length === 0) {
+          throw new Error('No valid segments found in response')
         }
         
         // Post-process to fix speaker consistency issues
-        const correctedSegments = this.correctSpeakerAssignments(segments)
+        const correctedSegments = this.correctSpeakerAssignments(validSegments)
         
         console.log(`Successfully parsed ${correctedSegments.length} segments`)
         return correctedSegments
         
       } catch (parseError) {
-        console.error(`Fast attempt ${attempt}/2 failed:`, parseError)
-        if (attempt === 2) {
-          throw new Error(`Fast segmentation failed: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`)
+        console.error(`Attempt ${attempt}/3 failed:`, parseError)
+        if (attempt === 3) {
+          throw new Error(`Segmentation failed: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`)
         }
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1000))
       }
     }
     
-    throw new Error('Fast segmentation failed after retries')
+    throw new Error('Segmentation failed after all retries')
+  }
+
+  private async segmentTranscriptInChunks(transcript: string, chunkSize: number): Promise<any[]> {
+    const lines = transcript.split('\n').filter(line => line.trim())
+    const chunks: string[] = []
+    let currentChunk = ''
+    
+    // Split into chunks while trying to keep speaker turns together
+    for (const line of lines) {
+      if (currentChunk.length + line.length > chunkSize && currentChunk.length > 0) {
+        chunks.push(currentChunk.trim())
+        currentChunk = line
+      } else {
+        currentChunk += (currentChunk ? '\n' : '') + line
+      }
+    }
+    
+    if (currentChunk.trim()) {
+      chunks.push(currentChunk.trim())
+    }
+    
+    console.log(`Processing transcript in ${chunks.length} chunks`)
+    
+    const allSegments: any[] = []
+    let timeOffset = 0
+    
+    for (let i = 0; i < chunks.length; i++) {
+      console.log(`Processing chunk ${i + 1}/${chunks.length}`)
+      
+      try {
+        const chunkSegments = await this.segmentSingleChunk(chunks[i], timeOffset)
+        allSegments.push(...chunkSegments)
+        
+        // Update time offset for next chunk
+        if (chunkSegments.length > 0) {
+          const lastTimestamp = chunkSegments[chunkSegments.length - 1].timestamp
+          const [minutes, seconds] = lastTimestamp.split(':').map(Number)
+          timeOffset = minutes * 60 + seconds + 10 // Add 10 seconds buffer
+        }
+        
+      } catch (error) {
+        console.error(`Chunk ${i + 1} failed:`, error)
+        // Continue with other chunks
+      }
+    }
+    
+    console.log(`Combined ${allSegments.length} segments from ${chunks.length} chunks`)
+    return allSegments
+  }
+
+  private async segmentSingleChunk(chunk: string, timeOffset: number): Promise<any[]> {
+    const prompt = `Analyze this service call excerpt and return a JSON array. Each element needs: speaker, timestamp, text, stage.
+
+Return ONLY a valid JSON array starting with [ and ending with ]. NO extra text:
+
+${chunk}`
+
+    const messages = [
+      { 
+        role: 'system', 
+        content: 'Return only JSON arrays. No markdown, no explanations.' 
+      },
+      { role: 'user', content: prompt }
+    ]
+
+    const response = await this.makeRequest(messages, 0.1, true)
+    const cleanedResponse = this.cleanJsonResponse(response)
+    const segments = JSON.parse(cleanedResponse)
+    
+    // Adjust timestamps if needed
+    return segments.map((seg: any) => ({
+      ...seg,
+      timestamp: this.adjustTimestamp(seg.timestamp, timeOffset)
+    }))
+  }
+
+  private adjustTimestamp(timestamp: string, offset: number): string {
+    if (!timestamp || typeof timestamp !== 'string') {
+      return `${Math.floor(offset / 60)}:${(offset % 60).toString().padStart(2, '0')}`
+    }
+    
+    const [minutes = 0, seconds = 0] = timestamp.split(':').map(Number)
+    const totalSeconds = minutes * 60 + seconds + offset
+    
+    return `${Math.floor(totalSeconds / 60)}:${(totalSeconds % 60).toString().padStart(2, '0')}`
   }
 
   private correctSpeakerAssignments(segments: any[]): any[] {

@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { useKV } from '@github/spark/hooks'
 import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendUp, Clock, Microphone, Warning, Bug } from '@phosphor-icons/react'
-import { analyzeServiceCall, analyzeServiceCallWithGemini, analyzeServiceCallWithOpenAI, useRealTranscription } from '@/components/CallAnalyzer'
+import { analyzeServiceCallWithGemini, analyzeServiceCallWithOpenAI, useRealTranscription } from '@/components/CallAnalyzer'
 import { InsightsPanel } from '@/components/InsightsPanel'
 import { DebugPanel } from '@/components/DebugPanel'
 import { TranscriptionConfig } from '@/services/transcription'
@@ -48,7 +48,7 @@ function App() {
   })
   const [geminiApiKey, setGeminiApiKey] = useKV<string | null>('gemini-api-key', 'AIzaSyAXkbkoculIKMISxHFkP1j7NunKeOYJAlM')
   const [openaiApiKey, setOpenaiApiKey] = useKV<string | null>('openai-api-key', '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')
-  const [aiProvider, setAiProvider] = useKV<'spark' | 'gemini' | 'openai'>('ai-provider', 'openai')
+  const [aiProvider, setAiProvider] = useKV<'gemini' | 'openai'>('ai-provider', 'openai')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [currentStep, setCurrentStep] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -90,9 +90,7 @@ function App() {
         analysisResult = await analyzeServiceCallWithGemini(transcript, geminiApiKey)
         console.log('Gemini analysis completed successfully')
       } else {
-        setCurrentStep('Analyzing with Spark AI...')
-        console.log('Using Spark AI for analysis...')
-        analysisResult = await analyzeServiceCall(transcript)
+        throw new Error('No AI provider configured. Please configure OpenAI or Gemini API key.')
       }
       
       console.log('Analysis completed successfully')
@@ -129,10 +127,10 @@ function App() {
           debugDetails += '\n4. Consider using Spark AI instead (switch AI provider)'
         } else if (err.message.includes('JSON') || err.message.includes('parse')) {
           debugDetails += '\n\nSUGGESTION: This appears to be a JSON parsing error from the AI service.'
-          debugDetails += '\n1. Try using Spark AI instead (switch AI provider above)'
+          debugDetails += '\n1. Try switching to the other AI provider (OpenAI ↔ Gemini)'
           debugDetails += '\n2. The AI response may have been malformed or incomplete'
           debugDetails += '\n3. Try again as this could be a temporary issue'
-          debugDetails += '\n4. If using OpenAI, check that your account has sufficient credits'
+          debugDetails += '\n4. Check that your API key has sufficient credits/quota'
         } else if (err.message.includes('Network error')) {
           debugDetails += '\n\nSUGGESTION: Network connection issue.'
           debugDetails += '\n1. Check your internet connection'
@@ -187,7 +185,7 @@ function App() {
               <Badge variant="default" className="bg-green-600">
                 {aiProvider === 'openai' && openaiApiKey ? 'AssemblyAI + OpenAI GPT-3.5-Turbo (Fast)' : 
                  aiProvider === 'gemini' && geminiApiKey ? 'AssemblyAI + Gemini AI Enhanced' : 
-                 'AssemblyAI + Spark AI Analysis'}
+                 'Configure AI Provider Required'}
               </Badge>
             </div>
           </div>
@@ -263,27 +261,14 @@ function App() {
                               <strong>Analysis Configuration</strong>
                               <Badge variant="secondary">
                                 {aiProvider === 'openai' && openaiApiKey ? 'OPENAI FAST' : 
-                                 aiProvider === 'gemini' && geminiApiKey ? 'GEMINI AI' : 'SPARK AI'}
+                                 aiProvider === 'gemini' && geminiApiKey ? 'GEMINI AI' : 'SETUP REQUIRED'}
                               </Badge>
                             </div>
                             
                             <div className="space-y-3">
                               <div>
-                                <label className="text-sm font-medium">AI Provider:</label>
+                                <label className="text-sm font-medium">AI Provider (Required):</label>
                                 <div className="mt-2 space-y-2">
-                                  <div className="flex items-center space-x-2">
-                                    <input
-                                      type="radio"
-                                      id="provider-spark"
-                                      name="aiProvider"
-                                      checked={aiProvider === 'spark'}
-                                      onChange={() => setAiProvider('spark')}
-                                      className="rounded border-gray-300"
-                                    />
-                                    <label htmlFor="provider-spark" className="text-sm">
-                                      Spark AI (Built-in analysis)
-                                    </label>
-                                  </div>
                                   <div className="flex items-center space-x-2">
                                     <input
                                       type="radio"
@@ -662,7 +647,7 @@ function App() {
                       </Alert>
 
                       <div className="mt-4 pt-4 border-t border-border">
-                        <p className="text-xs text-muted-foreground mb-2">Note: Upload a real audio file to test the complete analysis pipeline. All AI analysis is live - no demo data.</p>
+                        <p className="text-xs text-muted-foreground mb-2">Note: Configure an OpenAI or Gemini API key above, then upload a real audio file to test the complete analysis pipeline. All AI analysis is live - no fallback methods.</p>
                       </div>
                     </div>
                   )}
@@ -701,9 +686,9 @@ function App() {
                 Call Overview
               </CardTitle>
               <div className="flex items-center gap-2">
-                <Badge variant={aiProvider !== 'spark' ? "default" : "secondary"}>
+                <Badge variant="default">
                   {aiProvider === 'openai' && openaiApiKey ? 'OpenAI GPT-3.5-Turbo Analysis' : 
-                   aiProvider === 'gemini' && geminiApiKey ? 'Gemini AI Analysis' : 'Spark AI Analysis'}
+                   aiProvider === 'gemini' && geminiApiKey ? 'Gemini AI Analysis' : 'AI Analysis Required'}
                 </Badge>
               </div>
             </CardHeader>

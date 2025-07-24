@@ -569,71 +569,82 @@ function App() {
                                )}
 
                                {aiProvider === 'gemini' && (
-                                 <div>
-                                  <label className="text-xs text-muted-foreground">Gemini API Key (Free Tier):</label>
-                                  <div className="flex gap-2 mt-1">
-                                    <input
-                                      type="password"
-                                      value={geminiApiKey || ''}
-                                      onChange={(e) => setGeminiApiKey(e.target.value)}
-                                      placeholder="Enter Gemini API key (AIzaSy...)"
-                                      className="flex-1 px-2 py-1 text-xs border rounded"
-                                    />
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={async () => {
-                                        if (!geminiApiKey || geminiApiKey.trim().length === 0) {
-                                          setError('Please enter a Gemini API key first')
-                                          return
-                                        }
-                                        
-                                        setError(null)
-                                        setDebugInfo(null)
-                                        
-                                        try {
-                                          setCurrentStep('Testing Gemini API connection...')
-                                          console.log('Testing Gemini API key...')
-                                          
-                                          const { testGeminiAPI } = await import('@/services/gemini-test')
-                                          const testResult = await testGeminiAPI(geminiApiKey)
-                                          
-                                          if (testResult.success) {
-                                            setCurrentStep('✅ Gemini API key is valid!')
-                                            setTimeout(() => setCurrentStep(''), 3000)
-                                          } else {
-                                            throw new Error(testResult.error || 'API test failed')
-                                          }
-                                          
-                                        } catch (err) {
-                                          console.error('Gemini API test failed:', err)
-                                          const errorMessage = err instanceof Error ? err.message : 'API test failed'
-                                          setError(`API Test Failed: ${errorMessage}`)
-                                          setCurrentStep('')
-                                          
-                                          if (err instanceof Error && err.message.includes('Invalid Gemini API key')) {
-                                            setDebugInfo('Please check that your API key is correct and has the format: AIzaSy...')
-                                          } else if (err instanceof Error && err.message.includes('quota')) {
-                                            setDebugInfo('Your Gemini API quota may be exceeded. Check your Google AI Studio billing and usage.')
-                                          } else if (err instanceof Error && err.message.includes('403')) {
-                                            setDebugInfo('API key may not have proper permissions. Ensure you\'re using a Google AI Studio API key, not a Google Cloud API key.')
-                                          }
-                                        }
-                                      }}
-                                      disabled={!geminiApiKey || geminiApiKey.trim().length === 0}
-                                      className="text-xs"
-                                    >
-                                      Test
-                                    </Button>
-                                  </div>
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    Free tier has quota limits. Get your key from{' '}
-                                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" className="text-primary underline">
-                                      Google AI Studio
-                                    </a>
-                                  </p>
-                                </div>
-                              )}
+                                 <div className="border rounded-lg p-4 bg-blue-50">
+                                   <div className="flex items-center justify-between mb-3">
+                                     <label className="text-sm font-medium">Gemini Configuration</label>
+                                     <Badge variant={geminiApiKey ? "default" : "destructive"}>
+                                       {geminiApiKey ? 'READY' : 'SETUP REQUIRED'}
+                                     </Badge>
+                                   </div>
+                                   
+                                   <div className="space-y-3">
+                                     <div>
+                                       <label className="text-xs text-muted-foreground">API Key (Free Tier):</label>
+                                       <div className="flex gap-2 mt-1">
+                                         <input
+                                           type="password"
+                                           value={geminiApiKey || ''}
+                                           onChange={(e) => setGeminiApiKey(e.target.value)}
+                                           placeholder="Enter Gemini API key (AIzaSy...)"
+                                           className="flex-1 px-3 py-2 text-sm border rounded-md"
+                                         />
+                                         <Button
+                                           size="sm"
+                                           variant="outline"
+                                           onClick={async () => {
+                                             if (!geminiApiKey || geminiApiKey.trim().length === 0) {
+                                               setError('Please enter a Gemini API key first')
+                                               return
+                                             }
+                                             
+                                             setError(null)
+                                             setDebugInfo(null)
+                                             
+                                             try {
+                                               setCurrentStep('Testing Gemini API connection...')
+                                               console.log('Testing Gemini API key...')
+                                               
+                                               const { testGeminiAPI } = await import('@/services/gemini-test')
+                                               const testResult = await testGeminiAPI(geminiApiKey)
+                                               
+                                               if (testResult.success) {
+                                                 setCurrentStep('✅ Gemini API key is valid!')
+                                                 setTimeout(() => setCurrentStep(''), 3000)
+                                               } else {
+                                                 throw new Error(testResult.error || 'API test failed')
+                                               }
+                                               
+                                             } catch (err) {
+                                               console.error('Gemini API test failed:', err)
+                                               const errorMessage = err instanceof Error ? err.message : 'API test failed'
+                                               setError(`API Test Failed: ${errorMessage}`)
+                                               setCurrentStep('')
+                                               
+                                               if (err instanceof Error && err.message.includes('Invalid Gemini API key')) {
+                                                 setDebugInfo('Please check that your API key is correct and has the format: AIzaSy...')
+                                               } else if (err instanceof Error && err.message.includes('quota')) {
+                                                 setDebugInfo('Your Gemini API quota may be exceeded. Check your Google AI Studio billing and usage.')
+                                               } else if (err instanceof Error && err.message.includes('403')) {
+                                                 setDebugInfo('API key may not have proper permissions. Ensure you\'re using a Google AI Studio API key, not a Google Cloud API key.')
+                                               }
+                                             }
+                                           }}
+                                           disabled={!geminiApiKey || geminiApiKey.trim().length === 0}
+                                         >
+                                           Test API
+                                         </Button>
+                                       </div>
+                                     </div>
+                                     
+                                     <p className="text-xs text-muted-foreground">
+                                       Free tier has quota limits. Get your key from{' '}
+                                       <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" className="text-primary underline">
+                                         Google AI Studio
+                                       </a>
+                                     </p>
+                                   </div>
+                                 </div>
+                               )}
                               
                               <div className="flex items-center justify-between">
                                 <strong>AssemblyAI Transcription Active</strong>

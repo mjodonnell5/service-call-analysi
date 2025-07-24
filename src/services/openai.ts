@@ -37,6 +37,71 @@ export class OpenAIAnalyzer {
     this.apiKey = apiKey.trim()
   }
 
+  private cleanJsonResponse(response: string): string {
+    // Remove markdown code blocks if present
+    let cleaned = response.trim()
+    
+    // Remove opening ```json or ``` 
+    if (cleaned.startsWith('```json')) {
+      cleaned = cleaned.substring(7)
+    } else if (cleaned.startsWith('```')) {
+      cleaned = cleaned.substring(3)
+    }
+    
+    // Remove closing ```
+    if (cleaned.endsWith('```')) {
+      cleaned = cleaned.substring(0, cleaned.length - 3)
+    }
+    
+    // Remove any remaining leading/trailing whitespace
+    cleaned = cleaned.trim()
+    
+    // If the response contains text before or after JSON, try to extract just the JSON part
+    const jsonStart = cleaned.indexOf('{')
+    const jsonArrayStart = cleaned.indexOf('[')
+    
+    if (jsonStart === -1 && jsonArrayStart === -1) {
+      throw new Error('No JSON found in response')
+    }
+    
+    // Determine if it's an object or array and find the appropriate boundaries
+    let startIndex = -1
+    let startChar = ''
+    let endChar = ''
+    
+    if (jsonStart !== -1 && (jsonArrayStart === -1 || jsonStart < jsonArrayStart)) {
+      startIndex = jsonStart
+      startChar = '{'
+      endChar = '}'
+    } else {
+      startIndex = jsonArrayStart
+      startChar = '['
+      endChar = ']'
+    }
+    
+    // Find the matching closing bracket/brace
+    let bracketCount = 0
+    let endIndex = -1
+    
+    for (let i = startIndex; i < cleaned.length; i++) {
+      if (cleaned[i] === startChar) {
+        bracketCount++
+      } else if (cleaned[i] === endChar) {
+        bracketCount--
+        if (bracketCount === 0) {
+          endIndex = i
+          break
+        }
+      }
+    }
+    
+    if (endIndex === -1) {
+      throw new Error('Malformed JSON: could not find closing bracket')
+    }
+    
+    return cleaned.substring(startIndex, endIndex + 1)
+  }
+
   private async makeRequest(messages: any[], temperature = 0.3): Promise<any> {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -93,12 +158,12 @@ Stages definition:
 Here's the transcript:
 ${transcript}
 
-Return only the JSON array, no other text.`
+IMPORTANT: Return ONLY the JSON array, no markdown formatting, no explanation text, no code blocks.`
 
     const messages = [
       {
         role: 'system',
-        content: 'You are an expert at analyzing service call transcripts. Always return valid JSON arrays as requested.'
+        content: 'You are an expert at analyzing service call transcripts. Always return valid JSON arrays as requested, with no markdown formatting or additional text.'
       },
       {
         role: 'user',
@@ -109,7 +174,8 @@ Return only the JSON array, no other text.`
     const response = await this.makeRequest(messages)
     
     try {
-      const segments = JSON.parse(response)
+      const cleanedResponse = this.cleanJsonResponse(response)
+      const segments = JSON.parse(cleanedResponse)
       if (!Array.isArray(segments)) {
         throw new Error('Response is not an array')
       }
@@ -147,12 +213,14 @@ Return a JSON object with this exact structure:
   "upsell": {"present": boolean, "quality": string, "notes": string},
   "maintenance": {"present": boolean, "quality": string, "notes": string},
   "closing": {"present": boolean, "quality": string, "notes": string}
-}`
+}
+
+IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation text, no code blocks.`
 
     const messages = [
       {
         role: 'system',
-        content: 'You are an expert service call quality analyst. Evaluate each stage objectively and provide actionable feedback.'
+        content: 'You are an expert service call quality analyst. Evaluate each stage objectively and provide actionable feedback. Return only valid JSON without any markdown formatting.'
       },
       {
         role: 'user',
@@ -163,9 +231,11 @@ Return a JSON object with this exact structure:
     const response = await this.makeRequest(messages)
     
     try {
-      return JSON.parse(response)
+      const cleanedResponse = this.cleanJsonResponse(response)
+      return JSON.parse(cleanedResponse)
     } catch (parseError) {
       console.error('Failed to parse OpenAI compliance response:', parseError)
+      console.error('Raw response:', response)
       throw new Error(`Failed to parse OpenAI compliance response: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
     }
   }
@@ -185,12 +255,14 @@ Return a JSON object:
   "opportunities": ["string array of opportunities identified"],
   "successful": ["string array of successful sales actions"], 
   "missed": ["string array of missed opportunities"]
-}`
+}
+
+IMPORTANT: Return ONLY the JSON object, no markdown formatting, no explanation text, no code blocks.`
 
     const messages = [
       {
         role: 'system',
-        content: 'You are a sales performance analyst specializing in service calls. Focus on concrete, actionable insights.'
+        content: 'You are a sales performance analyst specializing in service calls. Focus on concrete, actionable insights. Return only valid JSON without any markdown formatting.'
       },
       {
         role: 'user',
@@ -201,9 +273,11 @@ Return a JSON object:
     const response = await this.makeRequest(messages)
     
     try {
-      return JSON.parse(response)
+      const cleanedResponse = this.cleanJsonResponse(response)
+      return JSON.parse(cleanedResponse)
     } catch (parseError) {
       console.error('Failed to parse OpenAI sales response:', parseError)
+      console.error('Raw response:', response)
       throw new Error(`Failed to parse OpenAI sales response: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
     }
   }

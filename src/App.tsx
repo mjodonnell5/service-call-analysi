@@ -115,21 +115,27 @@ function App() {
         debugDetails = `Error: ${err.message}\n\nStack Trace:\n${err.stack || 'No stack trace available'}`
         
         // Add specific context and suggestions based on error type
-        if (err.message.includes('Invalid Gemini API key')) {
+        if (err.message.includes('Invalid OpenAI API key')) {
+          debugDetails += '\n\nSUGGESTION: Your OpenAI API key appears to be invalid. Please:'
+          debugDetails += '\n1. Check that your API key starts with "sk-proj-" or "sk-"'
+          debugDetails += '\n2. Ensure you copied the full key from OpenAI Platform'
+          debugDetails += '\n3. Try the "Test" button to verify your API key'
+        } else if (err.message.includes('Invalid Gemini API key')) {
           debugDetails += '\n\nSUGGESTION: Your Gemini API key appears to be invalid. Please:'
           debugDetails += '\n1. Check that your API key starts with "AIza"'
           debugDetails += '\n2. Ensure you copied the full key from Google AI Studio'
           debugDetails += '\n3. Try the "Test" button to verify your API key'
         } else if (err.message.includes('quota') || err.message.includes('billing')) {
-          debugDetails += '\n\nSUGGESTION: Your Gemini API quota may be exceeded. Please:'
-          debugDetails += '\n1. Check your usage at https://aistudio.google.com/'
+          debugDetails += '\n\nSUGGESTION: Your API quota may be exceeded. Please:'
+          debugDetails += '\n1. Check your usage at your API provider dashboard'
           debugDetails += '\n2. Verify your billing settings (free tier has limits)'
           debugDetails += '\n3. Try again later if you hit rate limits'
-          debugDetails += '\n4. Consider using Spark AI instead (uncheck Gemini option)'
-        } else if (err.message.includes('JSON')) {
-          debugDetails += '\n\nSUGGESTION: This appears to be a JSON parsing error from Gemini.'
-          debugDetails += '\n1. Try using Spark AI instead (uncheck Gemini AI option)'
-          debugDetails += '\n2. The Gemini response may have been malformed'
+          debugDetails += '\n4. Consider using Spark AI instead (switch AI provider)'
+        } else if (err.message.includes('JSON') || err.message.includes('parse')) {
+          debugDetails += '\n\nSUGGESTION: This appears to be a JSON parsing error from the AI service.'
+          debugDetails += '\n1. Try using Spark AI instead (switch AI provider)'
+          debugDetails += '\n2. The AI response may have been malformed'
+          debugDetails += '\n3. Try again as this could be a temporary issue'
         } else if (err.message.includes('Network error')) {
           debugDetails += '\n\nSUGGESTION: Network connection issue.'
           debugDetails += '\n1. Check your internet connection'

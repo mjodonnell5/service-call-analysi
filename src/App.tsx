@@ -83,9 +83,19 @@ function App() {
       
       let analysisResult
       if (useGeminiAnalysis && geminiApiKey) {
+        setCurrentStep('Analyzing with Gemini AI (enhanced stage categorization)...')
         console.log('Using Gemini AI for enhanced analysis...')
-        analysisResult = await analyzeServiceCallWithGemini(transcript, geminiApiKey)
+        try {
+          analysisResult = await analyzeServiceCallWithGemini(transcript, geminiApiKey)
+          console.log('Gemini analysis completed successfully')
+        } catch (geminiError) {
+          console.error('Gemini analysis failed, falling back to Spark AI:', geminiError)
+          setCurrentStep('Gemini failed, falling back to Spark AI...')
+          // Gemini function already handles fallback internally
+          throw geminiError
+        }
       } else {
+        setCurrentStep('Analyzing with Spark AI...')
         console.log('Using Spark AI for analysis...')
         analysisResult = await analyzeServiceCall(transcript)
       }
@@ -328,9 +338,19 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
                               
                               let analysisResult
                               if (useGeminiAnalysis && geminiApiKey) {
+                                setCurrentStep('Test analysis: Using Gemini AI...')
                                 console.log('Using Gemini AI for test analysis...')
-                                analysisResult = await analyzeServiceCallWithGemini(testTranscript, geminiApiKey)
+                                try {
+                                  analysisResult = await analyzeServiceCallWithGemini(testTranscript, geminiApiKey)
+                                  console.log('Gemini test analysis completed successfully')
+                                } catch (geminiError) {
+                                  console.error('Gemini test analysis failed, using results from fallback:', geminiError)
+                                  setCurrentStep('Gemini failed, analysis completed with fallback...')
+                                  // The Gemini function handles fallback internally, so we still get a result
+                                  throw geminiError
+                                }
                               } else {
+                                setCurrentStep('Test analysis: Using Spark AI...')
                                 console.log('Using Spark AI for test analysis...')
                                 analysisResult = await analyzeServiceCall(testTranscript)
                               }

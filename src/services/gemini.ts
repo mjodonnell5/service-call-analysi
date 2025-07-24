@@ -42,8 +42,8 @@ export class GeminiAnalyzer {
   private async callGemini(prompt: string): Promise<string> {
     const url = `${this.baseUrl}/${this.config.model}:generateContent?key=${this.config.apiKey}`
     
-    // Check prompt length and truncate if necessary
-    const maxPromptLength = 20000 // Conservative limit
+    // Check prompt length and truncate if necessary (more conservative limit)
+    const maxPromptLength = 15000 // Reduced for better reliability
     let truncatedPrompt = prompt
     if (prompt.length > maxPromptLength) {
       console.log(`Prompt too long (${prompt.length} chars), truncating to ${maxPromptLength}`)
@@ -64,8 +64,8 @@ export class GeminiAnalyzer {
         generationConfig: {
           temperature: 0.1,
           topK: 1,
-          topP: 1,
-          maxOutputTokens: 2048, // Reduced to prevent oversized responses
+          topP: 0.95,
+          maxOutputTokens: 1500, // Reduced to prevent oversized/malformed responses
         },
         safetySettings: [
           {
@@ -106,6 +106,10 @@ export class GeminiAnalyzer {
       throw new Error('Gemini response blocked due to safety filters')
     }
     
+    if (candidate.finishReason === 'MAX_TOKENS') {
+      console.warn('Gemini response was truncated due to token limit')
+    }
+    
     if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
       throw new Error('No content returned from Gemini API')
     }
@@ -115,6 +119,9 @@ export class GeminiAnalyzer {
       throw new Error('Empty response from Gemini API')
     }
     
+    console.log(`Gemini response length: ${responseText.length} chars`)
+    console.log(`Gemini finish reason: ${candidate.finishReason || 'STOP'}`)
+    
     return responseText
   }
 
@@ -122,35 +129,29 @@ export class GeminiAnalyzer {
     try {
       // Step 1: Segment and categorize the transcript
       const segmentationPrompt = `
-You are a service call analyzer. Convert this transcript into structured JSON with speaker segments.
+Analyze this service call transcript and return structured JSON only.
 
-CRITICAL INSTRUCTIONS:
-1. Return ONLY valid JSON - no explanations, markdown, or extra text
-2. Each speaker statement becomes a separate segment
-3. Assign realistic timestamps starting at 00:15, incrementing by 15-45 seconds
-4. Categorize each segment into exactly one stage: introduction, diagnosis, solution, upsell, maintenance, closing
-
-Required JSON format:
-{
-  "segments": [
-    {"speaker": "Technician", "text": "Good morning! This is Mike from AirFlow Solutions.", "timestamp": "00:15", "stage": "introduction"},
-    {"speaker": "Customer", "text": "Hello, thank you for coming.", "timestamp": "00:30", "stage": "introduction"}
-  ],
-  "callType": "AC Repair Service Call"
-}
-
-Stage definitions:
-- introduction: Greetings, names, company intro, service confirmation
-- diagnosis: Problem questions, understanding issues, system inspection
-- solution: Explaining repairs, pricing, technical solutions
-- upsell: Additional services, optional products, upgrades
-- maintenance: Service plans, agreements, preventive measures  
-- closing: Thanks, wrap-up, scheduling, final arrangements
-
-Transcript:
+TRANSCRIPT:
 ${transcript}
 
-JSON RESPONSE:
+Return this exact JSON structure (no markdown, no explanations):
+{
+  "segments": [
+    {"speaker": "Technician", "text": "exact quote from transcript", "timestamp": "MM:SS", "stage": "introduction"},
+    {"speaker": "Customer", "text": "exact quote from transcript", "timestamp": "MM:SS", "stage": "diagnosis"}
+  ],
+  "callType": "descriptive call type"
+}
+
+STAGE RULES - assign each segment to exactly one:
+- introduction: greetings, names, company intro
+- diagnosis: problem questions, issue investigation  
+- solution: repair explanation, pricing, technical details
+- upsell: additional services, optional products
+- maintenance: service plans, agreements, preventive care
+- closing: thanks, wrap-up, final arrangements
+
+Use sequential timestamps starting at 00:15, adding 15-45 seconds per segment.
 `
 
       console.log('Step 1: Segmenting transcript with Gemini...')
@@ -159,10 +160,21 @@ JSON RESPONSE:
       let segmentationData
       try {
         segmentationData = this.robustJSONParse(segmentationResponse, 'segmentation')
+        
+        // Validate segmentation result
+        if (!segmentationData.segments || !Array.isArray(segmentationData.segments)) {
+          throw new Error('Invalid segments array in response')
+        }
+        
+        if (segmentationData.segments.length === 0) {
+          throw new Error('No segments found in response')
+        }
+        
+        console.log(`Successfully parsed ${segmentationData.segments.length} segments`)
       } catch (error) {
         console.error('Failed to parse Gemini segmentation response:', error)
-        console.error('Segmentation response that failed:', segmentationResponse.substring(0, 1000))
-        // Fallback to basic parsing
+        console.error('Segmentation response preview:', segmentationResponse.substring(0, 1000))
+        // Use fallback segmentation
         segmentationData = this.createFallbackSegmentation(transcript)
       }
 
@@ -170,33 +182,29 @@ JSON RESPONSE:
       const analysisPrompt = `
 Analyze this segmented service call for compliance and sales performance.
 
-CRITICAL INSTRUCTIONS:
-1. Return ONLY valid JSON - no explanations, markdown, or extra text
-2. Quality must be exactly: "Poor", "Fair", "Good", or "Excellent"
-3. Provide specific, actionable notes for each stage
+SEGMENTS BY STAGE:
+${segmentationData.segments.map((s: any) => `[${s.stage}] ${s.speaker}: ${s.text}`).join('\n')}
 
-Required JSON format:
+Return this exact JSON structure (no markdown, no explanations):
 {
   "overallScore": 85,
   "stages": [
-    {"stage": "introduction", "quality": "Good", "notes": "Professional greeting with company name"},
-    {"stage": "diagnosis", "quality": "Excellent", "notes": "Thorough questioning about the problem"},
-    {"stage": "solution", "quality": "Good", "notes": "Clear explanation with pricing"},
-    {"stage": "upsell", "quality": "Fair", "notes": "Some additional services offered"},
-    {"stage": "maintenance", "quality": "Excellent", "notes": "Maintenance plan clearly presented"},
-    {"stage": "closing", "quality": "Good", "notes": "Professional conclusion with thanks"}
+    {"stage": "introduction", "quality": "Good", "notes": "specific analysis notes"},
+    {"stage": "diagnosis", "quality": "Excellent", "notes": "specific analysis notes"},
+    {"stage": "solution", "quality": "Good", "notes": "specific analysis notes"},
+    {"stage": "upsell", "quality": "Fair", "notes": "specific analysis notes"},
+    {"stage": "maintenance", "quality": "Good", "notes": "specific analysis notes"},
+    {"stage": "closing", "quality": "Good", "notes": "specific analysis notes"}
   ],
   "salesInsights": {
-    "opportunities": ["Customer mentioned allergies - air purifier opportunity"],
-    "successful": ["Successfully sold maintenance plan"],
-    "missed": ["Could have emphasized cost savings more"]
+    "opportunities": ["specific opportunity 1", "specific opportunity 2"],
+    "successful": ["specific success 1", "specific success 2"],
+    "missed": ["specific missed opportunity 1"]
   }
 }
 
-Segmented data:
-${JSON.stringify(segmentationData.segments, null, 2)}
-
-JSON RESPONSE:
+Quality must be exactly: "Poor", "Fair", "Good", or "Excellent".
+OverallScore must be a number between 0-100.
 `
 
       console.log('Step 2: Analyzing compliance and sales with Gemini...')
@@ -205,16 +213,43 @@ JSON RESPONSE:
       let analysisData
       try {
         analysisData = this.robustJSONParse(analysisResponse, 'analysis')
+        
+        // Validate analysis result
+        if (typeof analysisData.overallScore !== 'number') {
+          analysisData.overallScore = 75
+        }
+        
+        if (!Array.isArray(analysisData.stages)) {
+          throw new Error('Invalid stages array in analysis response')
+        }
+        
+        // Ensure all required stages are present
+        const requiredStages = ['introduction', 'diagnosis', 'solution', 'upsell', 'maintenance', 'closing']
+        for (const stage of requiredStages) {
+          if (!analysisData.stages.find((s: any) => s.stage === stage)) {
+            analysisData.stages.push({
+              stage,
+              quality: 'Fair',
+              notes: `Stage analysis not provided by Gemini`
+            })
+          }
+        }
+        
+        if (!analysisData.salesInsights) {
+          analysisData.salesInsights = { opportunities: [], successful: [], missed: [] }
+        }
+        
+        console.log('Analysis data validated successfully')
       } catch (error) {
         console.error('Failed to parse Gemini analysis response:', error)
-        console.error('Analysis response that failed:', analysisResponse.substring(0, 1000))
-        // Fallback analysis
+        console.error('Analysis response preview:', analysisResponse.substring(0, 1000))
+        // Use fallback analysis
         analysisData = this.createFallbackAnalysis(segmentationData.segments)
       }
 
       // Combine the results
       return {
-        callType: segmentationData.callType,
+        callType: segmentationData.callType || 'Service Call (Gemini Analysis)',
         overallScore: analysisData.overallScore,
         stages: analysisData.stages,
         salesInsights: analysisData.salesInsights,
@@ -256,111 +291,145 @@ JSON RESPONSE:
       console.log(`Method 1 failed: ${e}`)
     }
 
-    // Method 2: Extract JSON from markdown or text with better cleaning
+    // Method 2: Clean and extract JSON more aggressively
     try {
       let cleanResponse = response.trim()
       
-      // Remove markdown code blocks
+      // Remove markdown code blocks and common prefixes
       cleanResponse = cleanResponse.replace(/```json\s*/gi, '').replace(/```\s*/g, '')
+      cleanResponse = cleanResponse.replace(/^JSON RESPONSE:\s*/gi, '')
+      cleanResponse = cleanResponse.replace(/^Here's the JSON response:\s*/gi, '')
+      cleanResponse = cleanResponse.replace(/^Response:\s*/gi, '')
       
-      // Remove any explanatory text before JSON
-      const jsonStart = Math.max(cleanResponse.indexOf('{'), cleanResponse.indexOf('['))
-      if (jsonStart > 0) {
-        cleanResponse = cleanResponse.substring(jsonStart)
-      }
+      // Find JSON boundaries more reliably
+      const openBrace = cleanResponse.indexOf('{')
+      const openBracket = cleanResponse.indexOf('[')
+      let jsonStart = -1
+      let jsonEnd = -1
       
-      // More aggressive JSON extraction - find complete JSON object/array
-      let braceCount = 0
-      let bracketCount = 0
-      let inString = false
-      let escaped = false
-      let endIndex = -1
-      
-      for (let i = 0; i < cleanResponse.length; i++) {
-        const char = cleanResponse[i]
-        const prevChar = i > 0 ? cleanResponse[i - 1] : ''
+      if (openBrace >= 0 && (openBracket < 0 || openBrace < openBracket)) {
+        jsonStart = openBrace
+        // Find matching closing brace
+        let braceCount = 0
+        let inString = false
+        let escaped = false
         
-        // Handle string escapes
-        if (char === '\\' && !escaped) {
-          escaped = true
-          continue
-        }
-        
-        if (char === '"' && !escaped) {
-          inString = !inString
-        }
-        
-        if (!inString) {
-          if (char === '{') braceCount++
-          else if (char === '}') braceCount--
-          else if (char === '[') bracketCount++
-          else if (char === ']') bracketCount--
+        for (let i = jsonStart; i < cleanResponse.length; i++) {
+          const char = cleanResponse[i]
           
-          // Found complete JSON structure
-          if (braceCount === 0 && bracketCount === 0 && (char === '}' || char === ']')) {
-            endIndex = i + 1
-            break
+          if (char === '\\' && !escaped) {
+            escaped = true
+            continue
           }
+          
+          if (char === '"' && !escaped) {
+            inString = !inString
+          }
+          
+          if (!inString) {
+            if (char === '{') braceCount++
+            else if (char === '}') {
+              braceCount--
+              if (braceCount === 0) {
+                jsonEnd = i + 1
+                break
+              }
+            }
+          }
+          
+          escaped = false
         }
+      } else if (openBracket >= 0) {
+        jsonStart = openBracket
+        // Find matching closing bracket
+        let bracketCount = 0
+        let inString = false
+        let escaped = false
         
-        escaped = false
+        for (let i = jsonStart; i < cleanResponse.length; i++) {
+          const char = cleanResponse[i]
+          
+          if (char === '\\' && !escaped) {
+            escaped = true
+            continue
+          }
+          
+          if (char === '"' && !escaped) {
+            inString = !inString
+          }
+          
+          if (!inString) {
+            if (char === '[') bracketCount++
+            else if (char === ']') {
+              bracketCount--
+              if (bracketCount === 0) {
+                jsonEnd = i + 1
+                break
+              }
+            }
+          }
+          
+          escaped = false
+        }
       }
       
-      if (endIndex > 0) {
-        cleanResponse = cleanResponse.substring(0, endIndex)
+      if (jsonStart >= 0 && jsonEnd > jsonStart) {
+        cleanResponse = cleanResponse.substring(jsonStart, jsonEnd)
+        
+        // Additional cleaning for common issues
+        cleanResponse = cleanResponse
+          .replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
+          .replace(/\n/g, ' ')           // Replace newlines with spaces
+          .replace(/\t/g, ' ')           // Replace tabs with spaces
+          .replace(/\s{2,}/g, ' ')       // Collapse multiple spaces
+          .replace(/,\s*,/g, ',')        // Remove duplicate commas
+        
+        const parsed = JSON.parse(cleanResponse)
+        console.log(`Method 2 (boundary extraction) succeeded for ${type}`)
+        return parsed
       }
-      
-      const parsed = JSON.parse(cleanResponse)
-      console.log(`Method 2 (extraction) succeeded for ${type}`)
-      return parsed
     } catch (e) {
       console.log(`Method 2 failed: ${e}`)
     }
 
-    // Method 3: Advanced JSON repair attempts
+    // Method 3: Regex-based extraction with repair
     try {
-      let fixedResponse = response.trim()
+      const jsonPattern = /\{[\s\S]*?\}|\[[\s\S]*?\]/g
+      const matches = response.match(jsonPattern)
       
-      // Remove markdown and extra text
-      fixedResponse = fixedResponse.replace(/```json\s*/gi, '').replace(/```\s*/g, '')
-      fixedResponse = fixedResponse.replace(/^[^{\[]*/, '') // Remove leading non-JSON text
-      
-      // Extract just the JSON portion using regex
-      const jsonMatch = fixedResponse.match(/[\{\[][\s\S]*[\}\]]/)
-      if (jsonMatch) {
-        fixedResponse = jsonMatch[0]
-        
-        // Advanced JSON fixes
-        fixedResponse = fixedResponse
-          .replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
-          .replace(/([{,]\s*)"([^"]*)"(\s*:\s*)"([^"]*)"([^,}\]]*)/g, '$1"$2"$3"$4"') // Fix malformed strings
-          .replace(/\n+/g, ' ')  // Replace multiple newlines
-          .replace(/\t+/g, ' ')  // Replace tabs
-          .replace(/\s{2,}/g, ' ') // Collapse multiple spaces
-          .replace(/"\s*:\s*"/g, '":"') // Compact key-value pairs
-          .replace(/,\s*,/g, ',') // Remove duplicate commas
-          .replace(/([{,]\s*)"([^"]*)"(\s*:\s*)([^",}\]]+)([,}\]])/g, (match, p1, p2, p3, p4, p5) => {
-            // Quote unquoted values that aren't numbers/booleans
-            if (!/^(true|false|null|\d+\.?\d*)$/.test(p4.trim())) {
-              return `${p1}"${p2}"${p3}"${p4.trim()}"${p5}`
-            }
-            return match
-          })
-        
-        // Try to parse the fixed JSON
-        const parsed = JSON.parse(fixedResponse)
-        console.log(`Method 3 (advanced fixing) succeeded for ${type}`)
-        return parsed
+      if (matches && matches.length > 0) {
+        // Try each match until one parses successfully
+        for (const match of matches) {
+          try {
+            let fixedMatch = match
+              .replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
+              .replace(/\n/g, ' ')           // Replace newlines
+              .replace(/\t/g, ' ')           // Replace tabs
+              .replace(/\s{2,}/g, ' ')       // Collapse spaces
+              .replace(/([{,]\s*)"([^"]*)"(\s*:\s*)([^",}\]]+)([,}\]])/g, (full, p1, p2, p3, p4, p5) => {
+                // Quote unquoted non-numeric values
+                const trimmed = p4.trim()
+                if (!/^(true|false|null|-?\d+\.?\d*)$/.test(trimmed)) {
+                  return `${p1}"${p2}"${p3}"${trimmed}"${p5}`
+                }
+                return full
+              })
+            
+            const parsed = JSON.parse(fixedMatch)
+            console.log(`Method 3 (regex + repair) succeeded for ${type}`)
+            return parsed
+          } catch (e) {
+            continue // Try next match
+          }
+        }
       }
     } catch (e) {
       console.log(`Method 3 failed: ${e}`)
     }
 
-    // Method 4: Try chunk-by-chunk parsing (for truncated responses)
+    // Method 4: Progressive truncation
     try {
       let workingResponse = response.trim()
-      
-      // Find JSON boundaries
       const openBrace = workingResponse.indexOf('{')
       const openBracket = workingResponse.indexOf('[')
       const jsonStart = Math.max(openBrace, openBracket)
@@ -368,25 +437,36 @@ JSON RESPONSE:
       if (jsonStart >= 0) {
         workingResponse = workingResponse.substring(jsonStart)
         
-        // Try progressively smaller chunks until we get valid JSON
-        for (let length = workingResponse.length; length > 100; length -= 100) {
+        // Try progressively smaller chunks
+        for (let percent = 100; percent >= 30; percent -= 10) {
           try {
-            const chunk = workingResponse.substring(0, length)
+            const length = Math.floor(workingResponse.length * percent / 100)
+            let chunk = workingResponse.substring(0, length)
             
-            // Try to close any open structures
-            let testChunk = chunk
-            if (chunk.includes('{') && !chunk.endsWith('}')) {
-              testChunk = chunk + '}'
-            }
-            if (chunk.includes('[') && !chunk.endsWith(']')) {
-              testChunk = chunk + ']'
+            // Try to complete the JSON structure
+            if (chunk.startsWith('{') && !chunk.endsWith('}')) {
+              // Count open braces
+              const openBraces = (chunk.match(/\{/g) || []).length
+              const closeBraces = (chunk.match(/\}/g) || []).length
+              chunk += '}'.repeat(Math.max(0, openBraces - closeBraces))
+            } else if (chunk.startsWith('[') && !chunk.endsWith(']')) {
+              // Count open brackets  
+              const openBrackets = (chunk.match(/\[/g) || []).length
+              const closeBrackets = (chunk.match(/\]/g) || []).length
+              chunk += ']'.repeat(Math.max(0, openBrackets - closeBrackets))
             }
             
-            const parsed = JSON.parse(testChunk)
-            console.log(`Method 4 (chunking) succeeded for ${type} with length ${length}`)
+            // Clean up common issues
+            chunk = chunk
+              .replace(/,(\s*[}\]])/g, '$1')
+              .replace(/\n/g, ' ')
+              .replace(/\s{2,}/g, ' ')
+            
+            const parsed = JSON.parse(chunk)
+            console.log(`Method 4 (progressive truncation) succeeded for ${type} at ${percent}%`)
             return parsed
           } catch (e) {
-            // Continue to next chunk size
+            continue
           }
         }
       }
@@ -394,12 +474,19 @@ JSON RESPONSE:
       console.log(`Method 4 failed: ${e}`)
     }
 
-    // If all parsing methods fail, provide detailed error info
+    // If all parsing methods fail, provide detailed error info and fallback
     console.error(`All JSON parsing methods failed for ${type}`)
     console.error('Raw response (first 1000 chars):', response.substring(0, 1000))
     console.error('Raw response (last 500 chars):', response.substring(Math.max(0, response.length - 500)))
     
-    throw new Error(`Failed to parse Gemini ${type} response: ${response.substring(14300, 14400)}... (showing problematic section)`)
+    // Return fallback structure instead of throwing
+    if (type === 'segmentation') {
+      console.log('Returning fallback segmentation structure')
+      return this.createFallbackSegmentation('Failed to parse Gemini response')
+    } else {
+      console.log('Returning fallback analysis structure')
+      return this.createFallbackAnalysis([])
+    }
   }
 
   private createFallbackSegmentation(transcript: string): any {

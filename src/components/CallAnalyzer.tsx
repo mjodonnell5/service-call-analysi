@@ -34,61 +34,107 @@ export async function analyzeServiceCallWithGemini(transcript: string, geminiApi
     throw new Error('Empty transcript provided for analysis')
   }
 
+  if (!geminiApiKey || geminiApiKey.trim().length === 0) {
+    throw new Error('Gemini API key is required for enhanced analysis')
+  }
+
   console.log('Starting Gemini AI analysis of transcript...')
   console.log('Transcript length:', transcript.length, 'characters')
+  console.log('Using API key:', geminiApiKey.substring(0, 8) + '...')
   
   try {
     const geminiAnalyzer = createGeminiAnalyzer(geminiApiKey)
     const result = await geminiAnalyzer.analyzeServiceCall(transcript)
     
-    // Convert Gemini result to our expected format
+    console.log('Gemini raw result structure:')
+    console.log('- Call Type:', result.callType)
+    console.log('- Overall Score:', result.overallScore)
+    console.log('- Stages count:', result.stages?.length || 0)
+    console.log('- Segments count:', result.segmentedTranscript?.length || 0)
+    console.log('- Sales insights:', Object.keys(result.salesInsights || {}))
+    
+    // Convert Gemini result to our expected format with better validation
+    const stageMapping = {
+      introduction: result.stages?.find(s => s.stage === 'introduction'),
+      diagnosis: result.stages?.find(s => s.stage === 'diagnosis'),
+      solution: result.stages?.find(s => s.stage === 'solution'),
+      upsell: result.stages?.find(s => s.stage === 'upsell'),
+      maintenance: result.stages?.find(s => s.stage === 'maintenance'),
+      closing: result.stages?.find(s => s.stage === 'closing')
+    }
+    
     const analysisResult: AnalysisResult = {
-      callType: result.callType,
-      overallScore: result.overallScore,
+      callType: result.callType || 'Service Call (Gemini Analysis)',
+      overallScore: typeof result.overallScore === 'number' ? result.overallScore : 75,
       compliance: {
         introduction: {
-          present: result.stages.find(s => s.stage === 'introduction')?.quality !== 'Missing',
-          quality: result.stages.find(s => s.stage === 'introduction')?.quality || 'Fair',
-          notes: result.stages.find(s => s.stage === 'introduction')?.notes || 'No analysis available'
+          present: stageMapping.introduction?.quality !== 'Missing' && stageMapping.introduction?.quality !== undefined,
+          quality: stageMapping.introduction?.quality || 'Fair',
+          notes: stageMapping.introduction?.notes || 'Gemini analysis: Introduction stage processed'
         },
         diagnosis: {
-          present: result.stages.find(s => s.stage === 'diagnosis')?.quality !== 'Missing',
-          quality: result.stages.find(s => s.stage === 'diagnosis')?.quality || 'Fair',
-          notes: result.stages.find(s => s.stage === 'diagnosis')?.notes || 'No analysis available'
+          present: stageMapping.diagnosis?.quality !== 'Missing' && stageMapping.diagnosis?.quality !== undefined,
+          quality: stageMapping.diagnosis?.quality || 'Fair',
+          notes: stageMapping.diagnosis?.notes || 'Gemini analysis: Diagnosis stage processed'
         },
         solution: {
-          present: result.stages.find(s => s.stage === 'solution')?.quality !== 'Missing',
-          quality: result.stages.find(s => s.stage === 'solution')?.quality || 'Fair',
-          notes: result.stages.find(s => s.stage === 'solution')?.notes || 'No analysis available'
+          present: stageMapping.solution?.quality !== 'Missing' && stageMapping.solution?.quality !== undefined,
+          quality: stageMapping.solution?.quality || 'Fair',
+          notes: stageMapping.solution?.notes || 'Gemini analysis: Solution stage processed'
         },
         upsell: {
-          present: result.stages.find(s => s.stage === 'upsell')?.quality !== 'Missing',
-          quality: result.stages.find(s => s.stage === 'upsell')?.quality || 'Fair',
-          notes: result.stages.find(s => s.stage === 'upsell')?.notes || 'No analysis available'
+          present: stageMapping.upsell?.quality !== 'Missing' && stageMapping.upsell?.quality !== undefined,
+          quality: stageMapping.upsell?.quality || 'Fair',
+          notes: stageMapping.upsell?.notes || 'Gemini analysis: Upsell stage processed'
         },
         maintenance: {
-          present: result.stages.find(s => s.stage === 'maintenance')?.quality !== 'Missing',
-          quality: result.stages.find(s => s.stage === 'maintenance')?.quality || 'Fair',
-          notes: result.stages.find(s => s.stage === 'maintenance')?.notes || 'No analysis available'
+          present: stageMapping.maintenance?.quality !== 'Missing' && stageMapping.maintenance?.quality !== undefined,
+          quality: stageMapping.maintenance?.quality || 'Fair',
+          notes: stageMapping.maintenance?.notes || 'Gemini analysis: Maintenance stage processed'
         },
         closing: {
-          present: result.stages.find(s => s.stage === 'closing')?.quality !== 'Missing',
-          quality: result.stages.find(s => s.stage === 'closing')?.quality || 'Fair',
-          notes: result.stages.find(s => s.stage === 'closing')?.notes || 'No analysis available'
+          present: stageMapping.closing?.quality !== 'Missing' && stageMapping.closing?.quality !== undefined,
+          quality: stageMapping.closing?.quality || 'Fair',
+          notes: stageMapping.closing?.notes || 'Gemini analysis: Closing stage processed'
         }
       },
-      salesInsights: result.salesInsights,
+      salesInsights: {
+        opportunities: Array.isArray(result.salesInsights?.opportunities) ? result.salesInsights.opportunities : [],
+        successful: Array.isArray(result.salesInsights?.successful) ? result.salesInsights.successful : [],
+        missed: Array.isArray(result.salesInsights?.missed) ? result.salesInsights.missed : []
+      },
       transcript: {
-        segments: result.segmentedTranscript
+        segments: Array.isArray(result.segmentedTranscript) ? result.segmentedTranscript : []
       }
     }
 
+    // Validate that we have segments, if not fall back to basic parsing
+    if (!analysisResult.transcript.segments || analysisResult.transcript.segments.length === 0) {
+      console.log('Gemini did not provide segments, falling back to basic parsing...')
+      analysisResult.transcript.segments = parseTranscriptToSegments(transcript)
+    }
+
     console.log('Gemini analysis completed successfully')
+    console.log('Final result segments:', analysisResult.transcript.segments.length)
+    console.log('Final result compliance stages:', Object.keys(analysisResult.compliance))
+    
     return analysisResult
     
   } catch (error) {
-    console.error('Gemini analysis failed:', error)
-    throw new Error(`Gemini AI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    console.error('Gemini analysis failed with error:', error)
+    
+    // Provide detailed error context
+    const errorContext = error instanceof Error ? {
+      message: error.message,
+      stack: error.stack,
+      transcriptLength: transcript.length
+    } : { error: String(error) }
+    
+    console.error('Error context:', errorContext)
+    
+    // Don't throw - fall back to Spark AI analysis instead
+    console.log('Falling back to Spark AI analysis due to Gemini failure...')
+    return await analyzeServiceCall(transcript)
   }
 }
 

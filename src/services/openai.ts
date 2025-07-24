@@ -138,6 +138,12 @@ export class OpenAIAnalyzer {
   async segmentTranscript(transcript: string): Promise<any[]> {
     const prompt = `Analyze this service call transcript and return a JSON array. Each element needs: speaker, timestamp, text, stage.
 
+IMPORTANT SPEAKER IDENTIFICATION:
+- Look for introductions like "This is [name] from [company]" = Technician
+- Customer typically describes problems, asks questions about cost/timing
+- Technician typically explains solutions, offers services, uses technical terms
+- DO NOT mix up speakers - maintain consistency throughout
+
 Stages: introduction, diagnosis, solution, upsell, maintenance, closing
 
 Return only valid JSON array starting with [ and ending with ]:
@@ -145,7 +151,10 @@ Return only valid JSON array starting with [ and ending with ]:
 ${transcript.length > 8000 ? transcript.substring(0, 8000) + '...[truncated]' : transcript}`
 
     const messages = [
-      { role: 'system', content: 'Return only JSON arrays. No markdown, no explanations.' },
+      { 
+        role: 'system', 
+        content: 'You are an expert at analyzing service call transcripts. Return only JSON arrays with accurate speaker identification. No markdown, no explanations.' 
+      },
       { role: 'user', content: prompt }
     ]
 
@@ -161,8 +170,11 @@ ${transcript.length > 8000 ? transcript.substring(0, 8000) + '...[truncated]' : 
           throw new Error('Invalid segments returned')
         }
         
-        console.log(`Successfully parsed ${segments.length} segments`)
-        return segments
+        // Post-process to fix speaker consistency issues
+        const correctedSegments = this.correctSpeakerAssignments(segments)
+        
+        console.log(`Successfully parsed ${correctedSegments.length} segments`)
+        return correctedSegments
         
       } catch (parseError) {
         console.error(`Fast attempt ${attempt}/2 failed:`, parseError)
@@ -173,6 +185,84 @@ ${transcript.length > 8000 ? transcript.substring(0, 8000) + '...[truncated]' : 
     }
     
     throw new Error('Fast segmentation failed after retries')
+  }
+
+  private correctSpeakerAssignments(segments: any[]): any[] {
+    if (!segments || segments.length === 0) return segments
+    
+    // Analyze speaker patterns to fix inconsistencies
+    let technicianSpeaker: string | null = null
+    let customerSpeaker: string | null = null
+    
+    // First pass: identify likely technician based on introduction patterns
+    for (let i = 0; i < Math.min(3, segments.length); i++) {
+      const segment = segments[i]
+      const text = segment.text?.toLowerCase() || ''
+      
+      if (text.includes('this is') && text.includes('from') || 
+          text.includes('good morning') || text.includes('good afternoon') ||
+          text.includes('technician') || text.includes('service')) {
+        technicianSpeaker = segment.speaker
+        break
+      }
+    }
+    
+    // Second pass: identify customer based on problem descriptions
+    for (const segment of segments) {
+      const text = segment.text?.toLowerCase() || ''
+      
+      if ((text.includes('my') || text.includes('our')) && 
+          (text.includes('problem') || text.includes('issue') || text.includes('broken'))) {
+        if (segment.speaker !== technicianSpeaker) {
+          customerSpeaker = segment.speaker
+          break
+        }
+      }
+    }
+    
+    // If we couldn't identify clearly, use heuristics
+    if (!technicianSpeaker || !customerSpeaker) {
+      const speakerCounts = new Map<string, number>()
+      segments.forEach(seg => {
+        if (seg.speaker) {
+          speakerCounts.set(seg.speaker, (speakerCounts.get(seg.speaker) || 0) + 1)
+        }
+      })
+      
+      const speakers = Array.from(speakerCounts.keys())
+      if (speakers.length >= 2) {
+        if (!technicianSpeaker) technicianSpeaker = speakers[0]
+        if (!customerSpeaker) customerSpeaker = speakers[1]
+      }
+    }
+    
+    console.log('Speaker identification:', { technicianSpeaker, customerSpeaker })
+    
+    // Third pass: correct speaker assignments based on content
+    return segments.map(segment => {
+      const text = segment.text?.toLowerCase() || ''
+      let correctedSpeaker = segment.speaker
+      
+      // Strong technician indicators
+      if (text.includes('let me') || text.includes('i can') || text.includes('we offer') ||
+          text.includes('system') || text.includes('repair') || text.includes('fix') ||
+          text.includes('install') || text.includes('maintenance plan') ||
+          text.includes('diagnosed') || text.includes('check')) {
+        correctedSpeaker = technicianSpeaker || 'Technician'
+      }
+      // Strong customer indicators  
+      else if ((text.includes('how much') || text.includes('cost') || text.includes('price')) ||
+               (text.includes('thank you') || text.includes('sounds good')) ||
+               (text.includes('my') && (text.includes('problem') || text.includes('issue'))) ||
+               (text.includes('allergies') || text.includes('bills'))) {
+        correctedSpeaker = customerSpeaker || 'Customer'
+      }
+      
+      return {
+        ...segment,
+        speaker: correctedSpeaker
+      }
+    })
   }
 
   async analyzeCombined(segments: any[]): Promise<{

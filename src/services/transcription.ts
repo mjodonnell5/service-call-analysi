@@ -114,19 +114,16 @@ class AssemblyAIProvider implements TranscriptionProvider {
     }
 
     console.log('Found utterances, formatting with speakers...')
+    
+    // First pass: analyze all utterances to determine who is likely technician vs customer
+    const speakerAnalysis = this.analyzeSpeakerRoles(result.utterances)
+    console.log('Speaker analysis:', speakerAnalysis)
+    
     // Format with proper speaker labels from AssemblyAI
     const formatted = result.utterances
       .map((utterance: any, index: number) => {
-        // Determine speaker role based on content and position
-        let speakerRole = 'Speaker ' + utterance.speaker
-        
-        // For service calls, try to identify technician vs customer
-        if (utterance.speaker === 'A') {
-          // First speaker is often the technician in service calls
-          speakerRole = index === 0 || this.isLikelyTechnician(utterance.text) ? 'Technician' : 'Customer'
-        } else if (utterance.speaker === 'B') {
-          speakerRole = index === 0 || this.isLikelyTechnician(utterance.text) ? 'Technician' : 'Customer'
-        }
+        // Use the analyzed speaker roles
+        const speakerRole = speakerAnalysis[utterance.speaker] || `Speaker ${utterance.speaker}`
         
         // Format timestamp if available
         const timestamp = utterance.start ? `[${this.formatTimestamp(utterance.start)}]` : ''
@@ -139,15 +136,111 @@ class AssemblyAIProvider implements TranscriptionProvider {
     return formatted
   }
 
-  private isLikelyTechnician(text: string): boolean {
-    const technicianWords = [
-      'technician', 'repair', 'service', 'fix', 'check', 'install', 'maintenance',
-      'system', 'unit', 'motor', 'compressor', 'filter', 'ductwork', 'hvac',
-      'good morning', 'good afternoon', 'this is', 'from', 'company', 'solutions'
-    ]
+  private analyzeSpeakerRoles(utterances: any[]): Record<string, string> {
+    // Analyze utterances to determine speaker roles
+    const speakerStats: Record<string, { 
+      technicianScore: number, 
+      customerScore: number,
+      utteranceCount: number,
+      firstUtterance: boolean
+    }> = {}
     
-    const lowerText = text.toLowerCase()
-    return technicianWords.some(word => lowerText.includes(word))
+    utterances.forEach((utterance, index) => {
+      const speaker = utterance.speaker
+      const text = utterance.text.toLowerCase()
+      
+      if (!speakerStats[speaker]) {
+        speakerStats[speaker] = {
+          technicianScore: 0,
+          customerScore: 0,
+          utteranceCount: 0,
+          firstUtterance: index === 0
+        }
+      }
+      
+      speakerStats[speaker].utteranceCount++
+      
+      // Technician indicators (weighted scoring)
+      const technicianIndicators = [
+        { phrases: ['good morning', 'good afternoon', 'hello', 'hi there'], weight: 3 },
+        { phrases: ['this is', 'my name is', 'i\'m calling from', 'from'], weight: 4 },
+        { phrases: ['technician', 'service', 'repair', 'fix', 'check', 'install'], weight: 5 },
+        { phrases: ['system', 'unit', 'motor', 'compressor', 'filter', 'hvac'], weight: 3 },
+        { phrases: ['let me', 'i can', 'i\'ll', 'we can', 'we offer'], weight: 2 },
+        { phrases: ['maintenance plan', 'service agreement', 'warranty'], weight: 4 },
+        { phrases: ['solutions', 'company', 'team', 'business'], weight: 2 },
+        { phrases: ['diagnosed', 'identified', 'found the problem'], weight: 4 }
+      ]
+      
+      // Customer indicators
+      const customerIndicators = [
+        { phrases: ['my', 'our', 'we have', 'i have'], weight: 2 },
+        { phrases: ['problem', 'issue', 'broken', 'not working'], weight: 3 },
+        { phrases: ['thank you', 'thanks', 'appreciate'], weight: 2 },
+        { phrases: ['how much', 'cost', 'price', 'expensive'], weight: 3 },
+        { phrases: ['yes', 'okay', 'sure', 'sounds good', 'that works'], weight: 1 },
+        { phrases: ['when', 'how long', 'schedule'], weight: 2 },
+        { phrases: ['allergies', 'bills', 'energy costs'], weight: 3 }
+      ]
+      
+      // Score based on content
+      technicianIndicators.forEach(({ phrases, weight }) => {
+        phrases.forEach(phrase => {
+          if (text.includes(phrase)) {
+            speakerStats[speaker].technicianScore += weight
+          }
+        })
+      })
+      
+      customerIndicators.forEach(({ phrases, weight }) => {
+        phrases.forEach(phrase => {
+          if (text.includes(phrase)) {
+            speakerStats[speaker].customerScore += weight
+          }
+        })
+      })
+      
+      // Additional heuristics
+      // First speaker who introduces themselves is likely technician
+      if (index === 0 && (text.includes('this is') || text.includes('from'))) {
+        speakerStats[speaker].technicianScore += 10
+      }
+      
+      // Longer, more technical explanations suggest technician
+      if (utterance.text.length > 100 && text.includes('system')) {
+        speakerStats[speaker].technicianScore += 2
+      }
+    })
+    
+    console.log('Speaker analysis stats:', speakerStats)
+    
+    // Determine roles based on scores
+    const speakerRoles: Record<string, string> = {}
+    const speakers = Object.keys(speakerStats)
+    
+    if (speakers.length === 2) {
+      // Two speakers - determine technician vs customer
+      const [speakerA, speakerB] = speakers
+      const scoreA = speakerStats[speakerA].technicianScore - speakerStats[speakerA].customerScore
+      const scoreB = speakerStats[speakerB].technicianScore - speakerStats[speakerB].customerScore
+      
+      if (scoreA > scoreB) {
+        speakerRoles[speakerA] = 'Technician'
+        speakerRoles[speakerB] = 'Customer'
+      } else {
+        speakerRoles[speakerA] = 'Customer'
+        speakerRoles[speakerB] = 'Technician'
+      }
+    } else {
+      // Fallback for other scenarios
+      speakers.forEach(speaker => {
+        const stats = speakerStats[speaker]
+        const netScore = stats.technicianScore - stats.customerScore
+        speakerRoles[speaker] = netScore > 0 ? 'Technician' : 'Customer'
+      })
+    }
+    
+    return speakerRoles
   }
 
   private formatTimestamp(seconds: number): string {
@@ -165,24 +258,37 @@ class AssemblyAIProvider implements TranscriptionProvider {
       const trimmed = sentence.trim()
       if (!trimmed) return ''
       
-      // Switch speakers based on conversation patterns
-      if (index > 0) {
-        // Customer response indicators
+      // First sentence is usually technician introduction
+      if (index === 0) {
+        currentSpeaker = 'Technician'
+      } else {
+        // Switch speakers based on conversation patterns
         if (this.isLikelyCustomerResponse(trimmed)) {
           currentSpeaker = 'Customer'
-        }
-        // Technician response indicators
-        else if (this.isLikelyTechnician(trimmed)) {
+        } else if (this.isLikelyTechnicianResponse(trimmed)) {
           currentSpeaker = 'Technician'
-        }
-        // Alternate speakers for dialogue
-        else if (index % 3 === 0) {
-          currentSpeaker = currentSpeaker === 'Technician' ? 'Customer' : 'Technician'
+        } else {
+          // Alternate speakers for natural dialogue flow
+          if (index % 2 === 1) {
+            currentSpeaker = currentSpeaker === 'Technician' ? 'Customer' : 'Technician'
+          }
         }
       }
       
       return `${currentSpeaker}: ${trimmed}.`
     }).join('\n\n')
+  }
+
+  private isLikelyTechnicianResponse(text: string): boolean {
+    const technicianIndicators = [
+      'technician', 'repair', 'service', 'fix', 'check', 'install', 'maintenance',
+      'system', 'unit', 'motor', 'compressor', 'filter', 'ductwork', 'hvac',
+      'good morning', 'good afternoon', 'this is', 'from', 'company', 'solutions',
+      'let me', 'i can', 'i\'ll', 'we can', 'we offer', 'diagnosed', 'found'
+    ]
+    
+    const lowerText = text.toLowerCase()
+    return technicianIndicators.some(word => lowerText.includes(word))
   }
 
   private isLikelyCustomerResponse(text: string): boolean {
@@ -241,19 +347,48 @@ class OpenAIWhisperProvider implements TranscriptionProvider {
       const trimmed = sentence.trim()
       if (!trimmed) return ''
       
-      // Switch speakers based on conversation patterns
-      if (index > 0 && (
-        trimmed.toLowerCase().includes('thank you') ||
-        trimmed.toLowerCase().includes('okay') ||
-        trimmed.toLowerCase().includes('yes') ||
-        trimmed.toLowerCase().includes('no') ||
-        trimmed.toLowerCase().includes('that sounds')
-      )) {
-        currentSpeaker = currentSpeaker === 'Technician' ? 'Customer' : 'Technician'
+      // First sentence is usually technician introduction
+      if (index === 0) {
+        currentSpeaker = 'Technician'
+      } else {
+        // Switch speakers based on conversation patterns
+        if (this.isCustomerResponse(trimmed)) {
+          currentSpeaker = 'Customer'
+        } else if (this.isTechnicianResponse(trimmed)) {
+          currentSpeaker = 'Technician'
+        } else {
+          // Alternate speakers for natural dialogue
+          if (index % 2 === 1) {
+            currentSpeaker = currentSpeaker === 'Technician' ? 'Customer' : 'Technician'
+          }
+        }
       }
       
       return `${currentSpeaker}: ${trimmed}.`
     }).join('\n\n')
+  }
+
+  private isTechnicianResponse(text: string): boolean {
+    const techWords = [
+      'technician', 'repair', 'service', 'fix', 'check', 'install', 'maintenance',
+      'system', 'unit', 'motor', 'compressor', 'filter', 'hvac', 'ductwork',
+      'good morning', 'good afternoon', 'this is', 'from', 'company',
+      'let me', 'i can', 'i\'ll', 'we can', 'we offer'
+    ]
+    
+    const lowerText = text.toLowerCase()
+    return techWords.some(word => lowerText.includes(word))
+  }
+
+  private isCustomerResponse(text: string): boolean {
+    const customerWords = [
+      'thank you', 'thanks', 'okay', 'yes', 'no', 'that sounds', 'how much', 'when',
+      'my', 'our', 'we have', 'i have', 'problem', 'issue', 'broken',
+      'not working', 'stopped', 'noise', 'bills', 'allergies'
+    ]
+    
+    const lowerText = text.toLowerCase()
+    return customerWords.some(word => lowerText.includes(word))
   }
 }
 

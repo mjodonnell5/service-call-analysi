@@ -329,13 +329,17 @@ VALIDATION: Ensure stages are distributed logically across conversation flow. Ea
       console.log('AI stage distribution is poor, applying rule-based correction...')
       
       // Re-assign stages using rule-based approach
-      return processedSegments.map((segment, index) => ({
+      const correctedSegments = processedSegments.map((segment, index) => ({
         ...segment,
         stage: determineStage(index, segment.text, totalSegments)
       }))
+      
+      // Apply speaker consistency correction
+      return correctSparkSpeakerAssignments(correctedSegments)
     }
     
-    return processedSegments
+    // Apply speaker consistency correction to good AI results too
+    return correctSparkSpeakerAssignments(processedSegments)
     
   } catch (parseError) {
     console.error('Segmentation JSON parsing failed:', parseError)
@@ -867,4 +871,93 @@ function determineStage(index: number, text: string, totalLines: number): string
   
   // Closing phase (final 15%)
   return 'closing'
+}
+
+function correctSparkSpeakerAssignments(segments: any[]): any[] {
+  if (!segments || segments.length === 0) return segments
+  
+  console.log('Correcting speaker assignments for Spark AI analysis...')
+  
+  // Analyze speaker patterns to fix inconsistencies
+  let technicianSpeaker: string | null = null
+  let customerSpeaker: string | null = null
+  
+  // First pass: identify likely technician based on introduction patterns
+  for (let i = 0; i < Math.min(3, segments.length); i++) {
+    const segment = segments[i]
+    const text = segment.text?.toLowerCase() || ''
+    
+    if ((text.includes('this is') && text.includes('from')) || 
+        text.includes('good morning') || text.includes('good afternoon') ||
+        text.includes('technician') || text.includes('service')) {
+      technicianSpeaker = segment.speaker
+      console.log(`Identified technician speaker: ${technicianSpeaker}`)
+      break
+    }
+  }
+  
+  // Second pass: identify customer based on problem descriptions
+  for (const segment of segments) {
+    const text = segment.text?.toLowerCase() || ''
+    
+    if ((text.includes('my') || text.includes('our')) && 
+        (text.includes('problem') || text.includes('issue') || text.includes('broken'))) {
+      if (segment.speaker !== technicianSpeaker) {
+        customerSpeaker = segment.speaker
+        console.log(`Identified customer speaker: ${customerSpeaker}`)
+        break
+      }
+    }
+  }
+  
+  // If we couldn't identify clearly, use heuristics
+  if (!technicianSpeaker || !customerSpeaker) {
+    const speakerCounts = new Map<string, number>()
+    segments.forEach(seg => {
+      if (seg.speaker) {
+        speakerCounts.set(seg.speaker, (speakerCounts.get(seg.speaker) || 0) + 1)
+      }
+    })
+    
+    const speakers = Array.from(speakerCounts.keys())
+    if (speakers.length >= 2) {
+      if (!technicianSpeaker) technicianSpeaker = speakers[0]
+      if (!customerSpeaker) customerSpeaker = speakers[1]
+    }
+  }
+  
+  console.log('Final speaker identification:', { technicianSpeaker, customerSpeaker })
+  
+  // Third pass: correct speaker assignments based on content
+  return segments.map(segment => {
+    const text = segment.text?.toLowerCase() || ''
+    let correctedSpeaker = segment.speaker
+    
+    // Strong technician indicators
+    if (text.includes('let me') || text.includes('i can') || text.includes('we offer') ||
+        text.includes('system') || text.includes('repair') || text.includes('fix') ||
+        text.includes('install') || text.includes('maintenance plan') ||
+        text.includes('diagnosed') || text.includes('check') ||
+        text.includes('all done') || text.includes('you\'re welcome')) {
+      correctedSpeaker = technicianSpeaker || 'Technician'
+    }
+    // Strong customer indicators  
+    else if ((text.includes('how much') || text.includes('cost') || text.includes('price')) ||
+             (text.includes('thank you') || text.includes('sounds good')) ||
+             (text.includes('my') && (text.includes('problem') || text.includes('issue'))) ||
+             (text.includes('allergies') || text.includes('bills')) ||
+             (text.includes('yes') || text.includes('okay') || text.includes('sure'))) {
+      correctedSpeaker = customerSpeaker || 'Customer'
+    }
+    
+    // If speaker changed, log it for debugging
+    if (correctedSpeaker !== segment.speaker) {
+      console.log(`Corrected speaker: "${segment.speaker}" -> "${correctedSpeaker}" for text: "${segment.text.substring(0, 50)}..."`)
+    }
+    
+    return {
+      ...segment,
+      speaker: correctedSpeaker
+    }
+  })
 }

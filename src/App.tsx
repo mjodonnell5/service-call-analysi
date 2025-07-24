@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { useKV } from '@github/spark/hooks'
 import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendingUp, Clock, Microphone, AlertTriangle, Bug } from '@phosphor-icons/react'
-import { analyzeServiceCall, analyzeServiceCallWithGemini, useRealTranscription, useMockTranscription } from '@/components/CallAnalyzer'
+import { analyzeServiceCall, analyzeServiceCallWithGemini, analyzeServiceCallWithOpenAI, useRealTranscription, useMockTranscription } from '@/components/CallAnalyzer'
 import { InsightsPanel } from '@/components/InsightsPanel'
 import { DebugPanel } from '@/components/DebugPanel'
 import { TranscriptionConfig } from '@/services/transcription'
@@ -47,7 +47,8 @@ function App() {
     apiKey: '6e1ea8623e884e45b0da2f9b33bb06f9'
   })
   const [geminiApiKey, setGeminiApiKey] = useKV<string | null>('gemini-api-key', 'AIzaSyAXkbkoculIKMISxHFkP1j7NunKeOYJAlM')
-  const [useGeminiAnalysis, setUseGeminiAnalysis] = useKV<boolean>('use-gemini-analysis', true)
+  const [openaiApiKey, setOpenaiApiKey] = useKV<string | null>('openai-api-key', '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')
+  const [aiProvider, setAiProvider] = useKV<'spark' | 'gemini' | 'openai'>('ai-provider', 'openai')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [currentStep, setCurrentStep] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -82,7 +83,12 @@ function App() {
       console.log('Starting AI analysis...')
       
       let analysisResult
-      if (useGeminiAnalysis && geminiApiKey) {
+      if (aiProvider === 'openai' && openaiApiKey) {
+        setCurrentStep('Analyzing with OpenAI (enhanced stage categorization)...')
+        console.log('Using OpenAI for enhanced analysis...')
+        analysisResult = await analyzeServiceCallWithOpenAI(transcript, openaiApiKey)
+        console.log('OpenAI analysis completed successfully')
+      } else if (aiProvider === 'gemini' && geminiApiKey) {
         setCurrentStep('Analyzing with Gemini AI (enhanced stage categorization)...')
         console.log('Using Gemini AI for enhanced analysis...')
         analysisResult = await analyzeServiceCallWithGemini(transcript, geminiApiKey)
@@ -175,7 +181,9 @@ function App() {
             <p className="text-muted-foreground">Upload a service call recording to analyze technician performance and sales opportunities</p>
             <div className="mt-4 flex justify-center">
               <Badge variant="default" className="bg-green-600">
-                {useGeminiAnalysis && geminiApiKey ? 'Gemini AI Enhanced Analysis' : 'AssemblyAI + Spark AI Analysis'}
+                {aiProvider === 'openai' && openaiApiKey ? 'OpenAI Enhanced Analysis' : 
+                 aiProvider === 'gemini' && geminiApiKey ? 'Gemini AI Enhanced Analysis' : 
+                 'AssemblyAI + Spark AI Analysis'}
               </Badge>
             </div>
           </div>
@@ -247,25 +255,125 @@ function App() {
                             <div className="flex items-center justify-between">
                               <strong>Analysis Configuration</strong>
                               <Badge variant="secondary">
-                                {useGeminiAnalysis && geminiApiKey ? 'GEMINI AI' : 'SPARK AI'}
+                                {aiProvider === 'openai' && openaiApiKey ? 'OPENAI' : 
+                                 aiProvider === 'gemini' && geminiApiKey ? 'GEMINI AI' : 'SPARK AI'}
                               </Badge>
                             </div>
                             
                             <div className="space-y-3">
-                              <div className="flex items-center space-x-2">
-                                <input
-                                  type="checkbox"
-                                  id="use-gemini"
-                                  checked={useGeminiAnalysis}
-                                  onChange={(e) => setUseGeminiAnalysis(e.target.checked)}
-                                  className="rounded border-gray-300"
-                                />
-                                <label htmlFor="use-gemini" className="text-sm">
-                                  Use Gemini AI for enhanced analysis (better stage categorization)
-                                </label>
+                              <div>
+                                <label className="text-sm font-medium">AI Provider:</label>
+                                <div className="mt-2 space-y-2">
+                                  <div className="flex items-center space-x-2">
+                                    <input
+                                      type="radio"
+                                      id="provider-spark"
+                                      name="aiProvider"
+                                      checked={aiProvider === 'spark'}
+                                      onChange={() => setAiProvider('spark')}
+                                      className="rounded border-gray-300"
+                                    />
+                                    <label htmlFor="provider-spark" className="text-sm">
+                                      Spark AI (Built-in analysis)
+                                    </label>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <input
+                                      type="radio"
+                                      id="provider-openai"
+                                      name="aiProvider"
+                                      checked={aiProvider === 'openai'}
+                                      onChange={() => setAiProvider('openai')}
+                                      className="rounded border-gray-300"
+                                    />
+                                    <label htmlFor="provider-openai" className="text-sm">
+                                      OpenAI (Enhanced analysis with GPT-4)
+                                    </label>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <input
+                                      type="radio"
+                                      id="provider-gemini"
+                                      name="aiProvider"
+                                      checked={aiProvider === 'gemini'}
+                                      onChange={() => setAiProvider('gemini')}
+                                      className="rounded border-gray-300"
+                                    />
+                                    <label htmlFor="provider-gemini" className="text-sm">
+                                      Gemini AI (Google's AI model)
+                                    </label>
+                                  </div>
+                                </div>
                               </div>
                               
-                               {useGeminiAnalysis && (
+                               {aiProvider === 'openai' && (
+                                <div>
+                                  <label className="text-xs text-muted-foreground">OpenAI API Key:</label>
+                                  <div className="flex gap-2 mt-1">
+                                    <input
+                                      type="password"
+                                      value={openaiApiKey || ''}
+                                      onChange={(e) => setOpenaiApiKey(e.target.value)}
+                                      placeholder="Enter OpenAI API key (sk-proj-...)"
+                                      className="flex-1 px-2 py-1 text-xs border rounded"
+                                    />
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={async () => {
+                                        if (!openaiApiKey || openaiApiKey.trim().length === 0) {
+                                          setError('Please enter an OpenAI API key first')
+                                          return
+                                        }
+                                        
+                                        setError(null)
+                                        setDebugInfo(null)
+                                        
+                                        try {
+                                          setCurrentStep('Testing OpenAI API connection...')
+                                          console.log('Testing OpenAI API key...')
+                                          
+                                          const { testOpenAIAPI } = await import('@/services/openai')
+                                          const testResult = await testOpenAIAPI(openaiApiKey)
+                                          
+                                          if (testResult.success) {
+                                            setCurrentStep('✅ OpenAI API key is valid!')
+                                            setTimeout(() => setCurrentStep(''), 3000)
+                                          } else {
+                                            throw new Error(testResult.error || 'API test failed')
+                                          }
+                                          
+                                        } catch (err) {
+                                          console.error('OpenAI API test failed:', err)
+                                          const errorMessage = err instanceof Error ? err.message : 'API test failed'
+                                          setError(`API Test Failed: ${errorMessage}`)
+                                          setCurrentStep('')
+                                          
+                                          if (err instanceof Error && err.message.includes('Invalid OpenAI API key')) {
+                                            setDebugInfo('Please check that your API key is correct and has the format: sk-proj-...')
+                                          } else if (err instanceof Error && err.message.includes('quota')) {
+                                            setDebugInfo('Your OpenAI API quota may be exceeded. Check your OpenAI billing and usage.')
+                                          } else if (err instanceof Error && err.message.includes('403')) {
+                                            setDebugInfo('API key may not have proper permissions. Ensure you\\'re using a valid OpenAI API key.')
+                                          }
+                                        }
+                                      }}
+                                      disabled={!openaiApiKey || openaiApiKey.trim().length === 0}
+                                      className="text-xs"
+                                    >
+                                      Test
+                                    </Button>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    Get your API key from{' '}
+                                    <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" className="text-primary underline">
+                                      OpenAI Platform
+                                    </a>
+                                  </p>
+                                </div>
+                               )}
+
+                               {aiProvider === 'gemini' && (
                                 <div>
                                   <label className="text-xs text-muted-foreground">Gemini API Key (Free Tier):</label>
                                   <div className="flex gap-2 mt-1">
@@ -402,7 +510,12 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
                               setOriginalTranscript(testTranscript)
                               
                               let analysisResult
-                              if (useGeminiAnalysis && geminiApiKey) {
+                              if (aiProvider === 'openai' && openaiApiKey) {
+                                setCurrentStep('Test analysis: Using OpenAI...')
+                                console.log('Using OpenAI for test analysis...')
+                                analysisResult = await analyzeServiceCallWithOpenAI(testTranscript, openaiApiKey)
+                                console.log('OpenAI test analysis completed successfully')
+                              } else if (aiProvider === 'gemini' && geminiApiKey) {
                                 setCurrentStep('Test analysis: Using Gemini AI...')
                                 console.log('Using Gemini AI for test analysis...')
                                 analysisResult = await analyzeServiceCallWithGemini(testTranscript, geminiApiKey)
@@ -480,8 +593,9 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
                 Call Overview
               </CardTitle>
               <div className="flex items-center gap-2">
-                <Badge variant={useGeminiAnalysis && geminiApiKey ? "default" : "secondary"}>
-                  {useGeminiAnalysis && geminiApiKey ? 'Gemini AI Analysis' : 'Spark AI Analysis'}
+                <Badge variant={aiProvider !== 'spark' ? "default" : "secondary"}>
+                  {aiProvider === 'openai' && openaiApiKey ? 'OpenAI Analysis' : 
+                   aiProvider === 'gemini' && geminiApiKey ? 'Gemini AI Analysis' : 'Spark AI Analysis'}
                 </Badge>
               </div>
             </CardHeader>

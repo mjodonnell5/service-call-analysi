@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { transcriptionService, TranscriptionConfig } from '@/services/transcription'
 import { createGeminiAnalyzer, GeminiAnalysisResult } from '@/services/gemini'
+import { OpenAIAnalyzer } from '@/services/openai'
 
 interface AnalysisResult {
   callType: string
@@ -26,6 +27,30 @@ interface AnalysisResult {
       stage: string
     }>
   }
+}
+
+// Enhanced analysis using OpenAI API for better stage categorization and analysis
+export async function analyzeServiceCallWithOpenAI(transcript: string, openaiApiKey: string): Promise<AnalysisResult> {
+  if (!transcript || transcript.trim().length === 0) {
+    throw new Error('Empty transcript provided for analysis')
+  }
+
+  if (!openaiApiKey || openaiApiKey.trim().length === 0) {
+    throw new Error('OpenAI API key is required for enhanced analysis')
+  }
+
+  console.log('Starting OpenAI analysis of transcript...')
+  console.log('Transcript length:', transcript.length, 'characters')
+  console.log('Using API key:', openaiApiKey.substring(0, 8) + '...')
+  
+  const openaiAnalyzer = new OpenAIAnalyzer(openaiApiKey)
+  const result = await openaiAnalyzer.analyzeServiceCall(transcript)
+  
+  console.log('OpenAI analysis completed successfully')
+  console.log('Final result segments:', result.transcript.segments.length)
+  console.log('Final result compliance stages:', Object.keys(result.compliance))
+  
+  return result
 }
 
 // Enhanced analysis using Gemini API for better stage categorization

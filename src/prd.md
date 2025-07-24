@@ -27,14 +27,15 @@ Service companies need to evaluate technician performance on customer calls to:
 - **Purpose**: Convert audio recordings to text with speaker diarization for accurate analysis
 - **Success Criteria**: Clear speaker separation, accurate text transcription, handles various audio qualities
 
-### 2. AI-Powered Stage Analysis
-- **Functionality**: Automatically categorize conversation segments into 6 stages (introduction, diagnosis, solution, upsell, maintenance, closing) using either Spark AI or Google Gemini for enhanced accuracy
+### 2. Multi-AI Provider Analysis System
+- **Functionality**: Automatically categorize conversation segments into 6 stages (introduction, diagnosis, solution, upsell, maintenance, closing) using selectable AI providers for enhanced accuracy
 - **Purpose**: Structure analysis around standard service call procedures with intelligent stage categorization
 - **Success Criteria**: Proper distribution across all stages, logical conversation flow, minimal empty stages
 - **AI Options**: 
   - **Spark AI**: Built-in analysis using prompt engineering and JSON mode
-  - **Gemini AI**: Enhanced analysis with better stage categorization and context understanding
-  - **Configuration**: Users can toggle between AI providers and configure API keys
+  - **OpenAI GPT-4**: Enhanced analysis with superior stage categorization and context understanding
+  - **Gemini AI**: Google's AI model for comprehensive conversation analysis  
+  - **Configuration**: Radio button selection for AI provider with individual API key configuration and testing
 
 ### 3. Compliance Assessment
 - **Functionality**: Evaluate quality and presence of each required call stage

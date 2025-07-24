@@ -32,24 +32,34 @@ export async function analyzeServiceCall(transcript: string): Promise<AnalysisRe
     throw new Error('Empty transcript provided for analysis')
   }
 
-  console.log('Starting multi-stage AI analysis of transcript...')
+  console.log('Starting comprehensive AI analysis of transcript...')
+  console.log('Transcript length:', transcript.length, 'characters')
   
   try {
     // Stage 1: Parse and segment the transcript with stage identification
     console.log('Stage 1: Segmenting transcript and identifying stages...')
     const segments = await segmentTranscriptWithAI(transcript)
+    console.log(`Stage 1 complete: ${segments.length} segments identified`)
+    
+    // Verify we have segments before proceeding
+    if (!segments || segments.length === 0) {
+      throw new Error('No segments were identified from the transcript')
+    }
     
     // Stage 2: Analyze compliance for each stage
     console.log('Stage 2: Analyzing compliance for each stage...')
     const compliance = await analyzeComplianceWithAI(transcript, segments)
+    console.log('Stage 2 complete: Compliance analysis finished')
     
     // Stage 3: Identify sales insights
     console.log('Stage 3: Analyzing sales opportunities...')
     const salesInsights = await analyzeSalesInsightsWithAI(transcript, segments)
+    console.log('Stage 3 complete: Sales insights identified')
     
     // Stage 4: Generate overall assessment
     console.log('Stage 4: Generating overall assessment...')
     const overallAssessment = await generateOverallAssessmentWithAI(transcript, compliance, salesInsights)
+    console.log('Stage 4 complete: Overall assessment generated')
     
     const analysis: AnalysisResult = {
       callType: overallAssessment.callType,
@@ -59,19 +69,38 @@ export async function analyzeServiceCall(transcript: string): Promise<AnalysisRe
       transcript: { segments }
     }
     
-    // Log final stage distribution for debugging
+    // Enhanced validation and logging
     const stageDistribution = segments.reduce((acc, segment) => {
       acc[segment.stage] = (acc[segment.stage] || 0) + 1
       return acc
     }, {} as Record<string, number>)
-    console.log('Final stage distribution:', stageDistribution)
     
-    return analysis
+    console.log('Final analysis summary:')
+    console.log('- Call Type:', analysis.callType)
+    console.log('- Overall Score:', analysis.overallScore)
+    console.log('- Segments:', segments.length)
+    console.log('- Stage Distribution:', stageDistribution)
+    console.log('- Sales Opportunities:', salesInsights.opportunities.length)
+    console.log('- Sales Successes:', salesInsights.successful.length)
+    console.log('- Missed Opportunities:', salesInsights.missed.length)
+    
+    // Final validation to ensure quality
+    return validateAndSanitizeAnalysis(analysis, transcript)
+    
   } catch (error) {
-    console.error('Multi-stage analysis failed:', error)
+    console.error('Multi-stage analysis failed with error:', error)
     
-    // Provide comprehensive fallback analysis if AI fails
-    console.log('Providing fallback analysis due to AI failure')
+    // Enhanced error reporting for debugging
+    if (error instanceof Error) {
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        transcriptLength: transcript.length,
+        transcriptPreview: transcript.substring(0, 200)
+      })
+    }
+    
+    console.log('Providing enhanced fallback analysis due to AI failure')
     return createFallbackAnalysis(transcript, error)
   }
 }
@@ -79,45 +108,43 @@ export async function analyzeServiceCall(transcript: string): Promise<AnalysisRe
 // Stage 1: Segment transcript and identify conversation stages
 async function segmentTranscriptWithAI(transcript: string) {
   const segmentPrompt = spark.llmPrompt`
-You are a conversation analysis expert. Break down this service call transcript into individual speaker segments and categorize each segment by conversation stage.
+You are an expert service call analyzer. Parse this transcript into speaker segments and categorize by conversation stage.
 
-TRANSCRIPT:
+TRANSCRIPT TO ANALYZE:
 ${transcript}
 
-Analyze the conversation flow and return a JSON array of segments. Each segment should represent one speaker turn in the conversation.
+STAGE CATEGORIES (assign EVERY segment to exactly one):
+- "introduction": Greetings, names, company intro, initial pleasantries, service confirmation
+- "diagnosis": Problem questions, symptom investigation, system inspection, issue identification  
+- "solution": Explaining found problems, repair details, pricing, technical solutions
+- "upsell": Additional services, optional products, upgrades, extra features
+- "maintenance": Service plans, future care, agreements, preventive measures
+- "closing": Final thanks, wrap-up, scheduling, contact info, goodbyes
 
-STAGE DEFINITIONS:
-- "introduction": Greetings, introductions, company identification, initial pleasantries
-- "diagnosis": Problem identification, asking questions, investigating the issue
-- "solution": Explaining the fix, providing pricing, describing technical work
-- "upsell": Offering additional services, upgrades, or optional add-ons
-- "maintenance": Discussing service plans, warranties, future maintenance
-- "closing": Wrap-up, thanks, final instructions, scheduling, goodbyes
+CRITICAL INSTRUCTIONS:
+1. Parse EVERY speaker statement into separate segments
+2. Distribute segments across ALL 6 stages - don't put everything in one stage
+3. Use actual speaker names from transcript (Technician, Customer, etc.)
+4. Generate sequential timestamps starting 00:15, adding 15-45 seconds per segment
+5. Include complete spoken text for each segment
 
-Return ONLY a JSON array in this exact format:
+Return ONLY valid JSON array:
 [
   {
     "speaker": "Technician",
-    "timestamp": "00:15",
+    "timestamp": "00:15", 
     "text": "Good morning! This is Mike from AirFlow Solutions.",
     "stage": "introduction"
   },
   {
-    "speaker": "Customer", 
-    "timestamp": "00:18",
-    "text": "Hello, thank you for coming out.",
-    "stage": "introduction"
+    "speaker": "Customer",
+    "timestamp": "00:30",
+    "text": "Hello, thank you for coming.",
+    "stage": "introduction"  
   }
 ]
 
-IMPORTANT RULES:
-1. Include EVERY speaking turn from the transcript
-2. Use exact speaker names from transcript (e.g., "Technician", "Customer")
-3. Generate realistic timestamps starting at 00:15, incrementing by 10-30 seconds
-4. Stage must be exactly one of: introduction, diagnosis, solution, upsell, maintenance, closing
-5. Text should be the exact words spoken by that speaker
-6. Return ONLY the JSON array, no other text
-  `
+VALIDATION: Ensure stages are distributed logically across conversation flow. Early statements = introduction/diagnosis, middle = solution/upsell, end = maintenance/closing.`
   
   const response = await spark.llm(segmentPrompt, 'gpt-4o', true)
   
@@ -126,14 +153,26 @@ IMPORTANT RULES:
   }
   
   try {
-    // Clean and parse JSON response
+    console.log('Raw AI response length:', response.length)
+    console.log('Raw AI response preview:', response.substring(0, 200))
+    
+    // Enhanced JSON extraction and cleaning
     let cleanResponse = response.trim()
+    
+    // Remove any markdown formatting
+    cleanResponse = cleanResponse.replace(/```json\s*/g, '').replace(/```\s*/g, '')
+    
+    // Find the JSON array bounds more robustly
     const arrayStart = cleanResponse.indexOf('[')
     const arrayEnd = cleanResponse.lastIndexOf(']')
     
-    if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
-      cleanResponse = cleanResponse.substring(arrayStart, arrayEnd + 1)
+    if (arrayStart === -1 || arrayEnd === -1 || arrayEnd <= arrayStart) {
+      console.error('No valid JSON array found in response')
+      throw new Error('Invalid JSON structure in AI response')
     }
+    
+    cleanResponse = cleanResponse.substring(arrayStart, arrayEnd + 1)
+    console.log('Cleaned JSON length:', cleanResponse.length)
     
     const segments = JSON.parse(cleanResponse)
     
@@ -141,18 +180,58 @@ IMPORTANT RULES:
       throw new Error('Response is not an array')
     }
     
-    // Validate and sanitize segments
-    return segments.map((segment: any, index: number) => ({
-      speaker: segment.speaker || 'Unknown',
-      timestamp: segment.timestamp || `${Math.floor(index * 20 / 60).toString().padStart(2, '0')}:${(index * 20 % 60).toString().padStart(2, '0')}`,
-      text: segment.text || '',
-      stage: ['introduction', 'diagnosis', 'solution', 'upsell', 'maintenance', 'closing'].includes(segment.stage) 
-        ? segment.stage 
-        : determineStage(index, segment.text || '', segments.length)
-    }))
+    if (segments.length === 0) {
+      throw new Error('AI returned empty segments array')
+    }
+    
+    console.log(`Successfully parsed ${segments.length} segments from AI`)
+    
+    // Enhanced validation and normalization
+    const validStages = ['introduction', 'diagnosis', 'solution', 'upsell', 'maintenance', 'closing']
+    const processedSegments = segments.map((segment: any, index: number) => {
+      const processed = {
+        speaker: segment.speaker || `Speaker${index + 1}`,
+        timestamp: segment.timestamp || `${Math.floor(index * 20 / 60).toString().padStart(2, '0')}:${(index * 20 % 60).toString().padStart(2, '0')}`,
+        text: segment.text || '',
+        stage: validStages.includes(segment.stage) ? segment.stage : determineStage(index, segment.text || '', segments.length)
+      }
+      
+      // Log stage assignment for debugging
+      if (!validStages.includes(segment.stage)) {
+        console.log(`Fixed invalid stage "${segment.stage}" to "${processed.stage}" for segment ${index}`)
+      }
+      
+      return processed
+    })
+    
+    // Validate stage distribution to ensure good categorization
+    const stageCount = processedSegments.reduce((acc, seg) => {
+      acc[seg.stage] = (acc[seg.stage] || 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+    
+    console.log('AI stage distribution:', stageCount)
+    
+    // Check if AI did a poor job distributing stages
+    const totalSegments = processedSegments.length
+    const emptyStages = validStages.filter(stage => !stageCount[stage]).length
+    const largestStageCount = Math.max(...Object.values(stageCount))
+    
+    if (emptyStages > 3 || largestStageCount > totalSegments * 0.6) {
+      console.log('AI stage distribution is poor, applying rule-based correction...')
+      
+      // Re-assign stages using rule-based approach
+      return processedSegments.map((segment, index) => ({
+        ...segment,
+        stage: determineStage(index, segment.text, totalSegments)
+      }))
+    }
+    
+    return processedSegments
     
   } catch (parseError) {
     console.error('Segmentation JSON parsing failed:', parseError)
+    console.error('Response that failed to parse:', response)
     console.log('Falling back to rule-based segmentation...')
     return parseTranscriptToSegments(transcript)
   }

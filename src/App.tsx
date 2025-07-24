@@ -7,9 +7,10 @@ import { Progress } from '@/components/ui/progress'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { useKV } from '@github/spark/hooks'
-import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendingUp, Clock, Microphone, AlertTriangle } from '@phosphor-icons/react'
+import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendingUp, Clock, Microphone, AlertTriangle, Bug } from '@phosphor-icons/react'
 import { analyzeServiceCall, useRealTranscription, useMockTranscription } from '@/components/CallAnalyzer'
 import { InsightsPanel } from '@/components/InsightsPanel'
+import { DebugPanel } from '@/components/DebugPanel'
 import { TranscriptionConfig } from '@/services/transcription'
 
 interface CallAnalysis {
@@ -40,6 +41,7 @@ interface CallAnalysis {
 
 function App() {
   const [analysis, setAnalysis] = useKV<CallAnalysis | null>('call-analysis', null)
+  const [originalTranscript, setOriginalTranscript] = useKV<string | null>('original-transcript', null)
   const [transcriptionConfig, setTranscriptionConfig] = useKV<TranscriptionConfig | null>('transcription-config', {
     provider: 'assemblyai',
     apiKey: '6e1ea8623e884e45b0da2f9b33bb06f9'
@@ -70,6 +72,9 @@ function App() {
       
       const transcript = await transcribeAudio(file)
       console.log('Transcription completed, length:', transcript.length)
+      
+      // Store the original transcript for debugging
+      setOriginalTranscript(transcript)
       
       setCurrentStep('Analyzing conversation with AI...')
       console.log('Starting AI analysis...')
@@ -273,6 +278,9 @@ Customer: Perfect. Thank you for the excellent service! You really know what you
 
 Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for your first tune-up. Have a great day and stay cool!`
                               
+                              // Store the test transcript for debugging
+                              setOriginalTranscript(testTranscript)
+                              
                               const analysisResult = await analyzeServiceCall(testTranscript)
                               setAnalysis(analysisResult)
                               setCurrentStep('')
@@ -308,7 +316,13 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
             <h1 className="text-3xl font-bold text-foreground">Call Analysis Results</h1>
             <p className="text-muted-foreground">AI-powered performance and sales opportunity assessment</p>
           </div>
-          <Button variant="outline" onClick={() => setAnalysis(null)}>
+          <Button variant="outline" onClick={() => {
+            setAnalysis(null)
+            setOriginalTranscript(null)
+            setError(null)
+            setDebugInfo(null)
+            console.log('Analysis data cleared')
+          }}>
             Analyze New Call
           </Button>
         </div>
@@ -389,11 +403,15 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
         </div>
 
         <Tabs defaultValue="transcript" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="transcript">Transcript & Analysis</TabsTrigger>
             <TabsTrigger value="compliance">Compliance Details</TabsTrigger>
             <TabsTrigger value="sales">Sales Insights</TabsTrigger>
             <TabsTrigger value="recommendations">Recommendations</TabsTrigger>
+            <TabsTrigger value="debug" className="flex items-center gap-1">
+              <Bug size={16} />
+              Debug
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="transcript" className="space-y-6">
@@ -554,6 +572,10 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
 
           <TabsContent value="recommendations">
             <InsightsPanel analysis={analysis} />
+          </TabsContent>
+
+          <TabsContent value="debug">
+            <DebugPanel analysis={analysis} transcript={originalTranscript || undefined} />
           </TabsContent>
         </Tabs>
       </div>

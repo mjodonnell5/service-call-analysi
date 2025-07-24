@@ -44,7 +44,6 @@ class AssemblyAIProvider implements TranscriptionProvider {
       body: JSON.stringify({
         audio_url: upload_url,
         speaker_labels: true, // Enable speaker identification
-        speakers_expected: 2, // Service calls typically have 2 speakers (technician + customer)
         auto_chapters: false,
         filter_profanity: false,
         format_text: true,

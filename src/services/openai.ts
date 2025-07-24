@@ -209,7 +209,7 @@ export class OpenAIAnalyzer {
     }
     
     // Enhanced prompt with stricter formatting requirements
-    const prompt = `Segment this service call transcript. Return ONLY a JSON array:
+    const prompt = `Segment this service call transcript into stages. Return ONLY a JSON array:
 
 [
   {"speaker": "Technician", "timestamp": "0:00", "text": "Hello, this is John from ABC Service.", "stage": "introduction"},
@@ -219,9 +219,23 @@ export class OpenAIAnalyzer {
 STRICT RULES:
 1. ONLY return the JSON array - NO markdown, NO explanations
 2. Speaker: "Technician" or "Customer" only
-3. Stages: "introduction", "diagnosis", "solution", "upsell", "maintenance", "closing"
-4. Keep text under 100 characters per segment
-5. Use simple timestamps (M:SS format)
+3. Stages: MUST use one of: "introduction", "diagnosis", "solution", "upsell", "maintenance", "closing"
+4. Every segment MUST have a valid stage
+5. Keep text under 150 characters per segment
+6. Use simple timestamps (M:SS format)
+
+STAGE GUIDELINES:
+- "introduction": Greetings, introductions, basic pleasantries
+- "diagnosis": Problem identification, issue discussion, troubleshooting
+- "solution": Fixing, repairing, explaining what was done
+- "upsell": Additional services, upgrades, extra products offered
+- "maintenance": Service plans, maintenance agreements, preventive care
+- "closing": Thank yous, goodbyes, call wrap-up
+
+IMPORTANT: Assign every segment to the most appropriate stage. If unsure, use:
+- Early segments → "introduction" or "diagnosis"
+- Middle segments → "diagnosis" or "solution"  
+- Late segments → "solution", "upsell", "maintenance", or "closing"
 
 TRANSCRIPT:
 ${transcript.substring(0, 5000)}`
@@ -257,9 +271,22 @@ ${transcript.substring(0, 5000)}`
           throw new Error('No valid segments found after validation')
         }
         
+        console.log('Valid segments before processing:', validSegments.length)
+        console.log('Sample valid segment:', validSegments[0])
+        
         // Post-process to fix speaker consistency and improve stage assignments
         const correctedSegments = this.correctSpeakerAssignments(validSegments)
+        console.log('Segments after speaker correction:', correctedSegments.length)
+        
         const finalSegments = this.improveStageAssignments(correctedSegments)
+        console.log('Final segments after stage improvement:', finalSegments.length)
+        
+        // Debug stage distribution
+        const stageDistribution = finalSegments.reduce((acc, seg) => {
+          acc[seg.stage] = (acc[seg.stage] || 0) + 1
+          return acc
+        }, {} as Record<string, number>)
+        console.log('Final stage distribution:', stageDistribution)
         
         console.log(`Successfully parsed ${finalSegments.length} segments`)
         return finalSegments
@@ -288,16 +315,16 @@ ${transcript.substring(0, 5000)}`
     const segments: any[] = []
     let timeOffset = 0
     
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.length < 10) continue
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim()
+      if (!trimmed || trimmed.length < 5) continue
       
       // Simple speaker detection
       let speaker = 'Customer'
       let text = trimmed
       
       // Check if line already has speaker label
-      const speakerMatch = trimmed.match(/^(Technician|Customer|Tech|Cust|Speaker [AB12]):\s*(.+)/)
+      const speakerMatch = trimmed.match(/^(Technician|Customer|Tech|Cust|Speaker [AB12]|[\[\(]?\d{1,3}:\d{2}[\]\)]?):\s*(.+)/)
       if (speakerMatch) {
         const speakerType = speakerMatch[1].toLowerCase()
         speaker = speakerType.includes('tech') ? 'Technician' : 'Customer'
@@ -307,28 +334,88 @@ ${transcript.substring(0, 5000)}`
         const lowerText = text.toLowerCase()
         if (lowerText.includes('this is') || lowerText.includes('from') || 
             lowerText.includes('service') || lowerText.includes('technician') ||
-            lowerText.includes('fix') || lowerText.includes('repair')) {
+            lowerText.includes('company') || lowerText.includes('repair') ||
+            lowerText.includes('let me') || lowerText.includes('i can')) {
           speaker = 'Technician'
         }
       }
       
-      // Simple stage detection
+      // Enhanced stage detection based on position and content
       let stage = 'diagnosis' // Default
       const lowerText = text.toLowerCase()
-      if (lowerText.includes('hello') || lowerText.includes('good morning')) stage = 'introduction'
-      else if (lowerText.includes('fix') || lowerText.includes('repair')) stage = 'solution'
-      else if (lowerText.includes('additional') || lowerText.includes('upgrade')) stage = 'upsell'
-      else if (lowerText.includes('maintenance')) stage = 'maintenance'
-      else if (lowerText.includes('thank') || lowerText.includes('goodbye')) stage = 'closing'
+      const isEarly = i < lines.length * 0.25
+      const isLate = i > lines.length * 0.75
+      
+      // Introduction (early in call)
+      if (isEarly && (lowerText.includes('hello') || lowerText.includes('good morning') || 
+          lowerText.includes('good afternoon') || lowerText.includes('this is') || 
+          lowerText.includes('calling from'))) {
+        stage = 'introduction'
+      }
+      // Closing (late in call)
+      else if (isLate && (lowerText.includes('thank') || lowerText.includes('goodbye') || 
+          lowerText.includes('have a great') || lowerText.includes('take care') ||
+          lowerText.includes('appreciate'))) {
+        stage = 'closing'
+      }
+      // Problem discussion (early-mid call)
+      else if (lowerText.includes('problem') || lowerText.includes('issue') || 
+               lowerText.includes('broken') || lowerText.includes('not working') ||
+               lowerText.includes('wrong') || lowerText.includes('stopped')) {
+        stage = 'diagnosis'
+      }
+      // Solution discussion (mid call)
+      else if (lowerText.includes('fix') || lowerText.includes('repair') || 
+               lowerText.includes('replace') || lowerText.includes('install') ||
+               lowerText.includes('solution') || lowerText.includes('found') ||
+               lowerText.includes('needs') || lowerText.includes('recommend')) {
+        stage = 'solution'
+      }
+      // Upsell opportunities
+      else if (lowerText.includes('additional') || lowerText.includes('upgrade') || 
+               lowerText.includes('also offer') || lowerText.includes('while i\'m here') ||
+               lowerText.includes('consider') || lowerText.includes('package')) {
+        stage = 'upsell'
+      }
+      // Maintenance discussion
+      else if (lowerText.includes('maintenance') || lowerText.includes('service plan') ||
+               lowerText.includes('annual') || lowerText.includes('preventive') ||
+               lowerText.includes('agreement') || lowerText.includes('schedule')) {
+        stage = 'maintenance'
+      }
       
       segments.push({
         speaker,
         timestamp: `${Math.floor(timeOffset / 60)}:${(timeOffset % 60).toString().padStart(2, '0')}`,
-        text: text.substring(0, 200), // Limit length
+        text: text.substring(0, 300), // Increased length for better context
         stage
       })
       
       timeOffset += 15 // Add 15 seconds per segment
+    }
+    
+    // Post-process to ensure we have a better distribution of stages
+    if (segments.length > 0) {
+      const stageCount = segments.reduce((acc, seg) => {
+        acc[seg.stage] = (acc[seg.stage] || 0) + 1
+        return acc
+      }, {} as Record<string, number>)
+      
+      console.log('Basic stage distribution:', stageCount)
+      
+      // If we have no introduction, force the first segment to be introduction
+      if (!stageCount.introduction && segments.length > 0) {
+        segments[0].stage = 'introduction'
+      }
+      
+      // If we have no closing, force the last segment to be closing if it makes sense
+      if (!stageCount.closing && segments.length > 1) {
+        const lastSegment = segments[segments.length - 1]
+        const lastText = lastSegment.text.toLowerCase()
+        if (lastText.includes('thank') || lastText.includes('good') || lastText.includes('bye')) {
+          lastSegment.stage = 'closing'
+        }
+      }
     }
     
     console.log(`Created ${segments.length} basic segments`)
@@ -351,20 +438,29 @@ ${transcript.substring(0, 5000)}`
       seg.speaker = seg.speaker.trim()
       seg.text = seg.text.trim()
       seg.timestamp = seg.timestamp || '00:00'
-      seg.stage = seg.stage || 'diagnosis'
+      
+      // Ensure stage is valid - default to 'diagnosis' if missing or invalid
+      const validStages = ['introduction', 'diagnosis', 'solution', 'upsell', 'maintenance', 'closing']
+      if (!seg.stage || !validStages.includes(seg.stage)) {
+        seg.stage = 'diagnosis' // Safe default
+      }
       
       // Normalize speaker names
       const speaker = seg.speaker.toLowerCase()
-      if (speaker.includes('tech') || speaker.includes('service') || speaker.includes('rep')) {
+      if (speaker.includes('tech') || speaker.includes('service') || speaker.includes('rep') ||
+          speaker.includes('agent') || speaker.includes('field')) {
         seg.speaker = 'Technician'
-      } else if (speaker.includes('customer') || speaker.includes('client') || speaker.includes('caller')) {
+      } else if (speaker.includes('customer') || speaker.includes('client') || speaker.includes('caller') ||
+                 speaker.includes('homeowner') || speaker.includes('user')) {
         seg.speaker = 'Customer'
       } else {
         // Auto-detect based on content
         const text = seg.text.toLowerCase()
         if (text.includes('this is') && text.includes('from') || 
             text.includes('i can') || text.includes('we offer') ||
-            text.includes('let me') || text.includes('system')) {
+            text.includes('let me') || text.includes('system') ||
+            text.includes('repair') || text.includes('service') ||
+            text.includes('fix') || text.includes('install')) {
           seg.speaker = 'Technician'
         } else {
           seg.speaker = 'Customer'
@@ -376,46 +472,108 @@ ${transcript.substring(0, 5000)}`
   }
 
   private improveStageAssignments(segments: any[]): any[] {
-    // Use content analysis to improve stage assignments
-    return segments.map((segment, index) => {
+    // Use content analysis to improve stage assignments with more aggressive detection
+    const processedSegments = segments.map((segment, index) => {
       const text = segment.text.toLowerCase()
-      const isEarly = index < segments.length * 0.2
-      const isLate = index > segments.length * 0.8
+      const isEarly = index < segments.length * 0.25
+      const isLate = index > segments.length * 0.75
+      const isMidEarly = index >= segments.length * 0.25 && index < segments.length * 0.5
+      const isMidLate = index >= segments.length * 0.5 && index < segments.length * 0.75
       
-      let stage = segment.stage
+      let stage = segment.stage || 'diagnosis' // Default fallback
+      let confidence = 0
       
-      // Introduction stage indicators
-      if (isEarly && (text.includes('hello') || text.includes('good morning') || 
-          text.includes('this is') || text.includes('from'))) {
+      // Introduction stage indicators (with higher priority in early segments)
+      if (text.includes('hello') || text.includes('good morning') || text.includes('good afternoon') ||
+          text.includes('this is') || text.includes('from') || text.includes('calling from') ||
+          text.includes('my name is') || text.includes('i\'m')) {
         stage = 'introduction'
-      }
-      // Closing stage indicators  
-      else if (isLate && (text.includes('thank you') || text.includes('goodbye') ||
-          text.includes('have a') || text.includes('take care'))) {
-        stage = 'closing'
-      }
-      // Diagnosis stage indicators
-      else if (text.includes('problem') || text.includes('issue') || text.includes('wrong') ||
-               text.includes('broken') || text.includes('not working')) {
-        stage = 'diagnosis'
-      }
-      // Solution stage indicators
-      else if (text.includes('fix') || text.includes('repair') || text.includes('replace') ||
-               text.includes('install') || text.includes('solution')) {
-        stage = 'solution'
-      }
-      // Upsell stage indicators
-      else if (text.includes('also offer') || text.includes('upgrade') || 
-               text.includes('additional') || text.includes('recommend')) {
-        stage = 'upsell'
-      }
-      // Maintenance stage indicators
-      else if (text.includes('maintenance') || text.includes('service plan') ||
-               text.includes('annual') || text.includes('check')) {
-        stage = 'maintenance'
+        confidence = isEarly ? 10 : 5
       }
       
-      return { ...segment, stage }
+      // Closing stage indicators (with higher priority in late segments)
+      else if (text.includes('thank you') || text.includes('thanks') || text.includes('goodbye') ||
+               text.includes('have a') || text.includes('take care') || text.includes('good day') ||
+               text.includes('pleasure') || text.includes('appreciate')) {
+        stage = 'closing'
+        confidence = isLate ? 10 : 3
+      }
+      
+      // Diagnosis stage indicators (strong throughout)
+      else if (text.includes('problem') || text.includes('issue') || text.includes('wrong') ||
+               text.includes('broken') || text.includes('not working') || text.includes('stopped') ||
+               text.includes('won\'t') || text.includes('doesn\'t') || text.includes('trouble') ||
+               text.includes('what\'s wrong') || text.includes('what happened')) {
+        stage = 'diagnosis'
+        confidence = 8
+      }
+      
+      // Solution stage indicators (mid-conversation)
+      else if (text.includes('fix') || text.includes('repair') || text.includes('replace') ||
+               text.includes('install') || text.includes('solution') || text.includes('found') ||
+               text.includes('diagnosed') || text.includes('identified') || text.includes('needs') ||
+               text.includes('recommend') || text.includes('suggest') || text.includes('can do')) {
+        stage = 'solution'
+        confidence = isMidEarly || isMidLate ? 8 : 5
+      }
+      
+      // Upsell stage indicators
+      else if (text.includes('also offer') || text.includes('upgrade') || text.includes('additional') ||
+               text.includes('while i\'m here') || text.includes('might want') || text.includes('consider') ||
+               text.includes('could also') || text.includes('other services') || text.includes('package')) {
+        stage = 'upsell'
+        confidence = 7
+      }
+      
+      // Maintenance stage indicators
+      else if (text.includes('maintenance') || text.includes('service plan') || text.includes('agreement') ||
+               text.includes('annual') || text.includes('yearly') || text.includes('regular') ||
+               text.includes('preventive') || text.includes('schedule') || text.includes('check-up')) {
+        stage = 'maintenance'
+        confidence = 7
+      }
+      
+      // Customer response patterns for better stage context
+      else if (segment.speaker === 'Customer') {
+        if (text.includes('how much') || text.includes('cost') || text.includes('price') ||
+            text.includes('expensive') || text.includes('bill')) {
+          // Customer asking about pricing - likely in solution/upsell phase
+          stage = isMidLate ? 'upsell' : 'solution'
+          confidence = 6
+        } else if (text.includes('yes') || text.includes('okay') || text.includes('sounds good') ||
+                   text.includes('that works') || text.includes('go ahead')) {
+          // Customer agreement - maintain current stage or default
+          confidence = 3
+        }
+      }
+      
+      return { ...segment, stage, confidence }
+    })
+    
+    // Second pass: Use neighboring context to improve assignments
+    return processedSegments.map((segment, index) => {
+      // Look at neighboring segments for context
+      const prevSegment = index > 0 ? processedSegments[index - 1] : null
+      const nextSegment = index < processedSegments.length - 1 ? processedSegments[index + 1] : null
+      
+      // If this segment has low confidence, inherit from high-confidence neighbors
+      if (segment.confidence < 4) {
+        if (prevSegment && prevSegment.confidence > 6) {
+          // Inherit from previous if it's high confidence and same speaker type
+          if (prevSegment.speaker === segment.speaker) {
+            segment.stage = prevSegment.stage
+          }
+        } else if (nextSegment && nextSegment.confidence > 6) {
+          // Or inherit from next segment
+          if (nextSegment.speaker === segment.speaker) {
+            segment.stage = nextSegment.stage
+          }
+        }
+      }
+      
+      // Remove confidence property before returning
+      const { confidence, ...finalSegment } = segment
+      return finalSegment
     })
   }
 

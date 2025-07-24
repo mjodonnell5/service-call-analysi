@@ -3,15 +3,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Bug, Download, Eye, Code } from '@phosphor-icons/react'
+import { Bug, Download, Eye, Code, Microphone } from '@phosphor-icons/react'
 import { useState } from 'react'
 
 interface DebugPanelProps {
   analysis: any
   transcript?: string
+  rawAssemblyAI?: any
 }
 
-export function DebugPanel({ analysis, transcript }: DebugPanelProps) {
+export function DebugPanel({ analysis, transcript, rawAssemblyAI }: DebugPanelProps) {
   const [showRaw, setShowRaw] = useState(false)
   
   const downloadDebugData = () => {
@@ -19,6 +20,7 @@ export function DebugPanel({ analysis, transcript }: DebugPanelProps) {
       timestamp: new Date().toISOString(),
       analysis,
       transcript,
+      rawAssemblyAI,
       stageDistribution: getStageDistribution(),
       segmentStats: getSegmentStats()
     }
@@ -93,11 +95,12 @@ export function DebugPanel({ analysis, transcript }: DebugPanelProps) {
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="stages">Stage Analysis</TabsTrigger>
             <TabsTrigger value="segments">Segments</TabsTrigger>
-            <TabsTrigger value="raw">Raw Data</TabsTrigger>
+            <TabsTrigger value="assemblyai">AssemblyAI Raw</TabsTrigger>
+            <TabsTrigger value="raw">All Raw Data</TabsTrigger>
           </TabsList>
           
           <TabsContent value="overview" className="space-y-4">
@@ -142,6 +145,30 @@ export function DebugPanel({ analysis, transcript }: DebugPanelProps) {
                   <div className="flex justify-between">
                     <span className="text-sm">Call Type:</span>
                     <Badge variant="outline">{analysis?.callType || 'Unknown'}</Badge>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Data Sources</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-sm">Transcription Provider:</span>
+                    <Badge variant="outline">{rawAssemblyAI?.provider || rawAssemblyAI ? 'AssemblyAI' : 'Unknown'}</Badge>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm">Raw AssemblyAI Data:</span>
+                    <Badge variant={rawAssemblyAI ? "default" : "destructive"}>
+                      {rawAssemblyAI ? 'Available' : 'Missing'}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm">Speaker Diarization:</span>
+                    <Badge variant={rawAssemblyAI?.utterances?.length > 0 ? "default" : "destructive"}>
+                      {rawAssemblyAI?.utterances?.length > 0 ? 'Success' : rawAssemblyAI ? 'Failed' : 'N/A'}
+                    </Badge>
                   </div>
                 </CardContent>
               </Card>
@@ -229,6 +256,91 @@ export function DebugPanel({ analysis, transcript }: DebugPanelProps) {
             </div>
           </TabsContent>
           
+          <TabsContent value="assemblyai">
+            {rawAssemblyAI ? (
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Microphone size={16} />
+                      AssemblyAI Raw Response
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {/* Key Information Summary */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <Card className="bg-muted/30">
+                          <CardContent className="p-3">
+                            <div className="text-xs text-muted-foreground">Status</div>
+                            <div className="text-sm font-medium">{rawAssemblyAI.status || 'Unknown'}</div>
+                          </CardContent>
+                        </Card>
+                        <Card className="bg-muted/30">
+                          <CardContent className="p-3">
+                            <div className="text-xs text-muted-foreground">Utterances</div>
+                            <div className="text-sm font-medium">{rawAssemblyAI.utterances?.length || 0}</div>
+                          </CardContent>
+                        </Card>
+                        <Card className="bg-muted/30">
+                          <CardContent className="p-3">
+                            <div className="text-xs text-muted-foreground">Text Length</div>
+                            <div className="text-sm font-medium">{rawAssemblyAI.text?.length || 0} chars</div>
+                          </CardContent>
+                        </Card>
+                      </div>
+
+                      {/* Speaker Detection Info */}
+                      {rawAssemblyAI.utterances && rawAssemblyAI.utterances.length > 0 && (
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="text-xs">Speaker Detection Results</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="space-y-2">
+                              <div className="text-xs">
+                                <strong>Speakers Found:</strong> {[...new Set(rawAssemblyAI.utterances.map((u: any) => u.speaker))].join(', ')}
+                              </div>
+                              <div className="text-xs">
+                                <strong>First 3 Utterances:</strong>
+                              </div>
+                              <div className="space-y-1">
+                                {rawAssemblyAI.utterances.slice(0, 3).map((utterance: any, index: number) => (
+                                  <div key={index} className="text-xs bg-muted/50 p-2 rounded">
+                                    <strong>Speaker {utterance.speaker}:</strong> {utterance.text?.substring(0, 100)}
+                                    {utterance.text?.length > 100 && '...'}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {/* Full Raw Data */}
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-xs">Complete AssemblyAI Response</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <pre className="text-xs bg-muted p-4 rounded overflow-auto max-h-96 whitespace-pre-wrap">
+                            {JSON.stringify(rawAssemblyAI, null, 2)}
+                          </pre>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            ) : (
+              <Alert>
+                <AlertDescription>
+                  No AssemblyAI raw data available. This data is captured when you upload and transcribe an audio file.
+                </AlertDescription>
+              </Alert>
+            )}
+          </TabsContent>
+          
           <TabsContent value="raw">
             {showRaw ? (
               <div className="space-y-4">
@@ -255,11 +367,24 @@ export function DebugPanel({ analysis, transcript }: DebugPanelProps) {
                     </CardContent>
                   </Card>
                 )}
+
+                {rawAssemblyAI && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-sm">AssemblyAI Raw Response</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <pre className="text-xs bg-muted p-4 rounded overflow-auto max-h-64">
+                        {JSON.stringify(rawAssemblyAI, null, 2)}
+                      </pre>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             ) : (
               <Alert>
                 <AlertDescription>
-                  Click "Show Raw" above to view the complete analysis object and original transcript data.
+                  Click "Show Raw" above to view the complete analysis object, original transcript, and AssemblyAI raw data.
                 </AlertDescription>
               </Alert>
             )}

@@ -42,6 +42,7 @@ interface CallAnalysis {
 function App() {
   const [analysis, setAnalysis] = useKV<CallAnalysis | null>('call-analysis', null)
   const [originalTranscript, setOriginalTranscript] = useKV<string | null>('original-transcript', null)
+  const [rawAssemblyAIData, setRawAssemblyAIData] = useKV<any | null>('raw-assemblyai-data', null)
   const [transcriptionConfig, setTranscriptionConfig] = useKV<TranscriptionConfig | null>('transcription-config', {
     provider: 'assemblyai',
     apiKey: '6e1ea8623e884e45b0da2f9b33bb06f9'
@@ -69,11 +70,12 @@ function App() {
       console.log('Starting file upload process...')
       setCurrentStep('Transcribing audio...')
       
-      const transcript = await transcribeAudio(file)
-      console.log('Transcription completed, length:', transcript.length)
+      const transcriptionResult = await transcribeAudio(file)
+      console.log('Transcription completed, length:', transcriptionResult.transcript.length)
       
-      // Store the original transcript for debugging
-      setOriginalTranscript(transcript)
+      // Store both the transcript and raw AssemblyAI data for debugging
+      setOriginalTranscript(transcriptionResult.transcript)
+      setRawAssemblyAIData(transcriptionResult.rawData)
       
       setCurrentStep('Analyzing conversation with AI (fast mode)...')
       console.log('Starting AI analysis...')
@@ -82,12 +84,12 @@ function App() {
       if (aiProvider === 'openai' && openaiApiKey) {
         setCurrentStep('Analyzing with OpenAI GPT-3.5-Turbo (fast mode - ~60% faster)...')
         console.log('Using OpenAI fast mode for enhanced analysis...')
-        analysisResult = await analyzeServiceCallWithOpenAI(transcript, openaiApiKey)
+        analysisResult = await analyzeServiceCallWithOpenAI(transcriptionResult.transcript, openaiApiKey)
         console.log('OpenAI fast analysis completed successfully')
       } else if (aiProvider === 'gemini' && geminiApiKey) {
         setCurrentStep('Analyzing with Gemini AI (enhanced stage categorization)...')
         console.log('Using Gemini AI for enhanced analysis...')
-        analysisResult = await analyzeServiceCallWithGemini(transcript, geminiApiKey)
+        analysisResult = await analyzeServiceCallWithGemini(transcriptionResult.transcript, geminiApiKey)
         console.log('Gemini analysis completed successfully')
       } else {
         throw new Error('No AI provider configured. Please configure OpenAI or Gemini API key.')
@@ -670,6 +672,7 @@ function App() {
           <Button variant="outline" onClick={() => {
             setAnalysis(null)
             setOriginalTranscript(null)
+            setRawAssemblyAIData(null)
             setError(null)
             setDebugInfo(null)
             console.log('Analysis data cleared')
@@ -932,7 +935,7 @@ function App() {
           </TabsContent>
 
           <TabsContent value="debug">
-            <DebugPanel analysis={analysis} transcript={originalTranscript || undefined} />
+            <DebugPanel analysis={analysis} transcript={originalTranscript || undefined} rawAssemblyAI={rawAssemblyAIData || undefined} />
           </TabsContent>
         </Tabs>
       </div>

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { transcriptionService, TranscriptionConfig } from '@/services/transcription'
+import { transcriptionService, TranscriptionConfig, TranscriptionResult } from '@/services/transcription'
 import { createGeminiAnalyzer, GeminiAnalysisResult } from '@/services/gemini'
 import { OpenAIAnalyzer } from '@/services/openai'
 
@@ -149,7 +149,7 @@ export async function analyzeServiceCallWithGemini(transcript: string, geminiApi
 export function useRealTranscription(config: TranscriptionConfig | null) {
   const [isTranscribing, setIsTranscribing] = useState(false)
 
-  const transcribeAudio = async (file: File): Promise<string> => {
+  const transcribeAudio = async (file: File): Promise<TranscriptionResult> => {
     if (!config) {
       throw new Error('Transcription service not configured. Please configure an API key first.')
     }
@@ -160,14 +160,14 @@ export function useRealTranscription(config: TranscriptionConfig | null) {
       console.log(`Starting real transcription with ${config.provider}...`)
       console.log(`File: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`)
       
-      const transcript = await transcriptionService.transcribe(file, config.apiKey, config.provider)
+      const result = await transcriptionService.transcribe(file, config.apiKey, config.provider)
       
-      if (!transcript || transcript.trim().length === 0) {
+      if (!result.transcript || result.transcript.trim().length === 0) {
         throw new Error('Transcription completed but no text was returned')
       }
       
       console.log('Transcription completed successfully')
-      return transcript
+      return result
       
     } catch (error) {
       console.error('Real transcription error:', error)

@@ -3,16 +3,22 @@
  * Supports multiple providers: AssemblyAI, OpenAI Whisper, and others
  */
 
+export interface TranscriptionResult {
+  transcript: string
+  rawData?: any
+  provider: string
+}
+
 interface TranscriptionProvider {
   name: string
-  transcribe: (file: File, apiKey: string) => Promise<string>
+  transcribe: (file: File, apiKey: string) => Promise<TranscriptionResult>
 }
 
 // AssemblyAI provider - recommended for service calls
 class AssemblyAIProvider implements TranscriptionProvider {
   name = 'AssemblyAI'
 
-  async transcribe(file: File, apiKey: string): Promise<string> {
+  async transcribe(file: File, apiKey: string): Promise<TranscriptionResult> {
     if (!apiKey || apiKey.trim() === '') {
       throw new Error('AssemblyAI API key is required')
     }
@@ -67,7 +73,7 @@ class AssemblyAIProvider implements TranscriptionProvider {
     return this.pollForCompletion(id, apiKey)
   }
 
-  private async pollForCompletion(transcriptId: string, apiKey: string): Promise<string> {
+  private async pollForCompletion(transcriptId: string, apiKey: string): Promise<TranscriptionResult> {
     const maxAttempts = 60 // 5 minutes max
     let attempts = 0
 
@@ -85,7 +91,12 @@ class AssemblyAIProvider implements TranscriptionProvider {
       const result = await response.json()
 
       if (result.status === 'completed') {
-        return this.formatTranscriptWithSpeakers(result)
+        const formattedTranscript = this.formatTranscriptWithSpeakers(result)
+        return {
+          transcript: formattedTranscript,
+          rawData: result,
+          provider: 'AssemblyAI'
+        }
       } else if (result.status === 'error') {
         throw new Error(`Transcription failed: ${result.error}`)
       }
@@ -333,7 +344,7 @@ class AssemblyAIProvider implements TranscriptionProvider {
 class OpenAIWhisperProvider implements TranscriptionProvider {
   name = 'OpenAI Whisper'
 
-  async transcribe(file: File, apiKey: string): Promise<string> {
+  async transcribe(file: File, apiKey: string): Promise<TranscriptionResult> {
     if (!apiKey || apiKey.trim() === '') {
       throw new Error('OpenAI API key is required')
     }
@@ -360,7 +371,13 @@ class OpenAIWhisperProvider implements TranscriptionProvider {
     
     // Note: Whisper doesn't provide speaker diarization by default
     // We'll add basic speaker inference based on conversation patterns
-    return this.addBasicSpeakerLabels(transcript)
+    const formattedTranscript = this.addBasicSpeakerLabels(transcript)
+    
+    return {
+      transcript: formattedTranscript,
+      rawData: { transcript, provider: 'OpenAI Whisper' },
+      provider: 'OpenAI Whisper'
+    }
   }
 
   private addBasicSpeakerLabels(text: string): string {
@@ -432,7 +449,7 @@ export class TranscriptionService {
     file: File, 
     apiKey: string, 
     provider: string = this.defaultProvider
-  ): Promise<string> {
+  ): Promise<TranscriptionResult> {
     // Validate file
     if (!file) {
       throw new Error('No audio file provided')

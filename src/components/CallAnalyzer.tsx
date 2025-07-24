@@ -40,7 +40,7 @@ You are an expert service call analyst. Analyze this service call transcript and
 TRANSCRIPT:
 ${transcript}
 
-Please analyze this call and return a valid JSON response with exactly this structure:
+Please analyze this call and return a valid JSON response with exactly this structure. Pay special attention to properly categorizing EVERY part of the conversation into the appropriate stage.
 
 {
   "callType": "Brief description of the type of service call",
@@ -94,6 +94,18 @@ Please analyze this call and return a valid JSON response with exactly this stru
   }
 }
 
+CRITICAL REQUIREMENTS FOR TRANSCRIPT SEGMENTS:
+1. Break down the entire conversation into individual speaker segments
+2. Each segment must have the exact speaker name (e.g., "Technician", "Customer") 
+3. Assign realistic timestamps (start with 00:15, increment by 10-30 seconds per segment)
+4. Categorize EVERY segment into one of these stages based on content:
+   - "introduction": Greetings, introductions, initial pleasantries
+   - "diagnosis": Problem identification, questioning, investigation
+   - "solution": Explaining the fix, pricing, technical details
+   - "upsell": Additional services, upgrades, accessories offered
+   - "maintenance": Service plans, warranties, future maintenance
+   - "closing": Wrap-up, thanks, final instructions, goodbyes
+
 IMPORTANT: Return ONLY valid JSON. Do not include any explanatory text before or after the JSON.
 
 Quality values must be exactly one of: "Poor", "Fair", "Good", "Excellent"
@@ -106,7 +118,7 @@ Focus on:
 4. Areas for improvement
 5. Specific coaching recommendations
 
-Be thorough but constructive in your analysis.
+Be thorough but constructive in your analysis, and ensure EVERY part of the conversation is represented in the segments array.
   `
 
   try {
@@ -117,6 +129,8 @@ Be thorough but constructive in your analysis.
     if (!response || response.trim() === '') {
       throw new Error('Empty response from AI service')
     }
+    
+    console.log('Raw AI response preview:', response.substring(0, 200) + '...')
     
     // Clean response - remove any non-JSON content
     let cleanResponse = response.trim()
@@ -131,6 +145,7 @@ Be thorough but constructive in your analysis.
     try {
       analysis = JSON.parse(cleanResponse)
       console.log('Successfully parsed AI response')
+      console.log('Segments count from AI:', analysis.transcript?.segments?.length || 0)
     } catch (parseError) {
       console.error('JSON parsing failed:', parseError)
       console.error('Clean response content:', cleanResponse)
@@ -139,6 +154,13 @@ Be thorough but constructive in your analysis.
     
     // Validate and sanitize the response
     analysis = validateAndSanitizeAnalysis(analysis, transcript)
+    
+    // Log final stage distribution for debugging
+    const stageDistribution = analysis.transcript.segments.reduce((acc, segment) => {
+      acc[segment.stage] = (acc[segment.stage] || 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+    console.log('Final stage distribution:', stageDistribution)
     
     return analysis
   } catch (error) {
@@ -183,17 +205,37 @@ function validateAndSanitizeAnalysis(analysis: any, transcript: string): Analysi
   if (!Array.isArray(analysis.salesInsights.successful)) analysis.salesInsights.successful = []
   if (!Array.isArray(analysis.salesInsights.missed)) analysis.salesInsights.missed = []
   
-  // If no segments provided, parse transcript
+  // If no segments provided or they're poorly categorized, parse transcript properly
   if (!Array.isArray(analysis.transcript.segments) || analysis.transcript.segments.length === 0) {
+    console.log('No segments in AI response, parsing transcript manually...')
     analysis.transcript.segments = parseTranscriptToSegments(transcript)
   } else {
-    // Validate existing segments
-    analysis.transcript.segments = analysis.transcript.segments.map((segment: any) => ({
-      speaker: segment.speaker || 'Unknown',
-      timestamp: segment.timestamp || '00:00',
-      text: segment.text || '',
-      stage: validStages.includes(segment.stage) ? segment.stage : 'introduction'
-    }))
+    // Validate existing segments and ensure proper stage distribution
+    let stageCount = { introduction: 0, diagnosis: 0, solution: 0, upsell: 0, maintenance: 0, closing: 0 }
+    
+    analysis.transcript.segments = analysis.transcript.segments.map((segment: any, index: number) => {
+      const validatedSegment = {
+        speaker: segment.speaker || 'Unknown',
+        timestamp: segment.timestamp || `${Math.floor(index * 15 / 60).toString().padStart(2, '0')}:${(index * 15 % 60).toString().padStart(2, '0')}`,
+        text: segment.text || '',
+        stage: validStages.includes(segment.stage) ? segment.stage : determineStage(index, segment.text || '', analysis.transcript.segments.length)
+      }
+      
+      stageCount[validatedSegment.stage as keyof typeof stageCount]++
+      return validatedSegment
+    })
+    
+    // If AI poorly distributed stages (e.g., everything in one stage), re-categorize
+    const totalSegments = analysis.transcript.segments.length
+    const emptyStages = Object.values(stageCount).filter(count => count === 0).length
+    
+    if (emptyStages > 3 || stageCount.introduction > totalSegments * 0.7) {
+      console.log('AI stage distribution is poor, re-categorizing segments...')
+      analysis.transcript.segments = analysis.transcript.segments.map((segment: any, index: number) => ({
+        ...segment,
+        stage: determineStage(index, segment.text, totalSegments)
+      }))
+    }
   }
   
   return analysis as AnalysisResult
@@ -291,34 +333,34 @@ export function useMockTranscription() {
       const delay = Math.min(Math.max(file.size / (1024 * 1024) * 1000, 2000), 8000)
       await new Promise(resolve => setTimeout(resolve, delay))
       
-      // Return mock transcript - comprehensive service call example
+      // Return mock transcript - comprehensive service call example with clear stage indicators
       return `Technician: Good morning! This is Mike from AirFlow Solutions. I'm here about your air conditioning service request. Am I speaking with Mrs. Johnson?
 
-Customer: Yes, that's me. Thank you for coming out so quickly. The AC stopped working completely yesterday evening.
+Customer: Yes, that's me. Thank you for coming out so quickly.
 
-Technician: I understand how frustrating that must be, especially with this heat. Can you tell me what happened right before it stopped working? Any unusual sounds or behaviors?
+Technician: My pleasure, Mrs. Johnson. I understand your AC stopped working completely yesterday evening. Can you tell me what happened right before it stopped working? Any unusual sounds or behaviors?
 
 Customer: Well, it's been making this grinding noise for about a week. Then yesterday it just shut off completely. We've had so many issues with this unit lately. Our energy bills have been through the roof too.
 
-Technician: A grinding noise often indicates a motor bearing issue. Let me check the unit first. How old is this system, and when was it last serviced?
+Technician: A grinding noise often indicates a motor bearing issue. Let me check the unit first and run some diagnostics. How old is this system, and when was it last serviced?
 
 Customer: It's about 12 years old. Honestly, we haven't had it serviced in probably 3 years. My husband has allergies and we've noticed the air quality isn't great either.
 
-Technician: I see. Regular maintenance is really important for both efficiency and air quality. Let me run some diagnostics here. I've found the problem - the compressor motor bearing has failed completely. I can replace it today for $485, which includes labor and the part. This should get you back up and running.
+Technician: I see the problem now. The compressor motor bearing has failed completely, which explains the grinding noise and shutdown. I can replace the bearing and get you back up and running today for $485, which includes labor and the part.
 
 Customer: That sounds reasonable. How long will it take? And is this something that's likely to happen again?
 
-Technician: About 2 hours for the repair. This particular failure isn't common, but I noticed your air filter is completely clogged, which puts extra strain on the system. Regular maintenance can prevent most issues like this. We actually offer a comprehensive maintenance plan that includes bi-annual check-ups, filter changes, and priority scheduling.
-
-Customer: What does that cost? We really can't afford more surprises like this.
-
-Technician: The plan is $199 annually, which works out to less than $17 per month. It includes spring and fall tune-ups, all filters for the year, and a 15% discount on any repairs. Given your husband's allergies, we could also install a UV air purifier system that would significantly improve your indoor air quality.
+Technician: About 2 hours for the repair. This particular failure isn't common, but I noticed your air filter is completely clogged, which puts extra strain on the system. I also want to mention we have a UV air purifier system that would significantly improve your indoor air quality, especially helpful for your husband's allergies.
 
 Customer: How much would that cost?
 
-Technician: The UV system is $350 installed, but with the maintenance plan it would be $297. It kills bacteria, mold, and allergens. Many of our customers with allergy sufferers see immediate improvement.
+Technician: The UV system is $350 installed. It kills bacteria, mold, and allergens right in your ductwork. Many of our customers with allergy sufferers see immediate improvement in their symptoms.
 
-Customer: Let me think about that. Can you just do the repair for now?
+Customer: That's interesting. What about preventing future breakdowns like this?
+
+Technician: Great question! We offer a comprehensive maintenance plan that includes bi-annual check-ups, filter changes, and priority scheduling. The plan is $199 annually, which works out to less than $17 per month, and includes a 15% discount on any repairs.
+
+Customer: Let me think about the UV system, but the maintenance plan sounds like a good idea. Can you just do the repair for now?
 
 Technician: Absolutely. I'll get started on the compressor repair right away. I'll leave you some information about our services to review when you're ready.
 
@@ -326,9 +368,11 @@ Technician: All done! Your system is running perfectly now. I've tested everythi
 
 Customer: Wow, it feels much cooler already. Thank you so much! You know what, I think we should sign up for that maintenance plan. This repair scared us.
 
-Technician: That's a great decision! I can set that up right now. I'll also leave you my direct number so you can call me personally if you decide on that UV system later. Here's your invoice and the maintenance agreement. Do you have any other questions?
+Technician: That's a great decision! I can set that up right now. I'll also leave you my direct number so you can call me personally if you decide on that UV system later. Here's your invoice and the maintenance agreement.
 
-Customer: No, I think we're all set. Thanks again for the excellent service!
+Customer: Perfect. Do you have any other questions for me?
+
+Technician: No, I think we're all set. Thanks again for the excellent service! You really know what you're doing.
 
 Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for your first tune-up. Have a great day and stay cool!`
       
@@ -378,41 +422,84 @@ function determineStage(index: number, text: string, totalLines: number): string
   const progress = index / Math.max(totalLines, 1)
   const lowerText = text.toLowerCase()
   
-  // Keyword-based detection with fallback to position
-  if (lowerText.includes('good morning') || lowerText.includes('hello') || lowerText.includes('this is') || index < 2) {
+  // Enhanced keyword-based detection with better patterns
+  
+  // Introduction indicators - greetings, names, company introduction
+  if (lowerText.includes('good morning') || lowerText.includes('good afternoon') || 
+      lowerText.includes('hello') || lowerText.includes('this is') || 
+      lowerText.includes('my name is') || lowerText.includes('speaking with') ||
+      lowerText.includes('thank you for') && index < 5) {
     return 'introduction'
   }
   
-  if (lowerText.includes('problem') || lowerText.includes('issue') || lowerText.includes('what happened') || 
-      lowerText.includes('sounds') || lowerText.includes('check') || lowerText.includes('diagnose')) {
+  // Diagnosis indicators - problem investigation, questions about issue
+  if (lowerText.includes('problem') || lowerText.includes('issue') || 
+      lowerText.includes('what happened') || lowerText.includes('tell me about') ||
+      lowerText.includes('when did') || lowerText.includes('sounds') || 
+      lowerText.includes('noise') || lowerText.includes('check') || 
+      lowerText.includes('diagnose') || lowerText.includes('how long') ||
+      lowerText.includes('stopped working') || lowerText.includes('not working') ||
+      lowerText.includes('what\'s wrong') || lowerText.includes('can you describe')) {
     return 'diagnosis'
   }
   
-  if (lowerText.includes('found the problem') || lowerText.includes('replace') || lowerText.includes('repair') ||
-      lowerText.includes('fix') || lowerText.includes('solution') || lowerText.includes('$')) {
+  // Solution indicators - explaining fixes, pricing, technical details
+  if (lowerText.includes('found the problem') || lowerText.includes('i can fix') ||
+      lowerText.includes('replace') || lowerText.includes('repair') ||
+      lowerText.includes('fix') || lowerText.includes('solution') || 
+      lowerText.includes('cost') || lowerText.includes('price') ||
+      lowerText.includes('$') || lowerText.includes('labor') ||
+      lowerText.includes('parts') || lowerText.includes('install') ||
+      lowerText.includes('get you back up')) {
     return 'solution'
   }
   
-  if (lowerText.includes('also') || lowerText.includes('additional') || lowerText.includes('upgrade') ||
-      lowerText.includes('would you like') || lowerText.includes('we also offer')) {
+  // Upsell indicators - additional services, optional extras
+  if (lowerText.includes('also offer') || lowerText.includes('additional') || 
+      lowerText.includes('upgrade') || lowerText.includes('would you like') ||
+      lowerText.includes('we also have') || lowerText.includes('another option') ||
+      lowerText.includes('air purifier') || lowerText.includes('uv system') ||
+      lowerText.includes('filter') || lowerText.includes('improve') ||
+      lowerText.includes('allergies') || lowerText.includes('air quality')) {
     return 'upsell'
   }
   
-  if (lowerText.includes('maintenance') || lowerText.includes('plan') || lowerText.includes('annual') ||
-      lowerText.includes('service agreement') || lowerText.includes('check-up')) {
+  // Maintenance indicators - service plans, future care
+  if (lowerText.includes('maintenance') || lowerText.includes('plan') || 
+      lowerText.includes('annual') || lowerText.includes('service agreement') || 
+      lowerText.includes('check-up') || lowerText.includes('tune-up') ||
+      lowerText.includes('bi-annual') || lowerText.includes('spring and fall') ||
+      lowerText.includes('discount on repairs') || lowerText.includes('priority') ||
+      lowerText.includes('per month') || lowerText.includes('yearly')) {
     return 'maintenance'
   }
   
-  if (lowerText.includes('thank you') || lowerText.includes('have a') || lowerText.includes('goodbye') ||
-      lowerText.includes('call if') || progress > 0.85) {
+  // Closing indicators - wrap up, thanks, final instructions
+  if (lowerText.includes('all done') || lowerText.includes('you\'re welcome') || 
+      lowerText.includes('thank you') || lowerText.includes('have a great') ||
+      lowerText.includes('goodbye') || lowerText.includes('call if') ||
+      lowerText.includes('any questions') || lowerText.includes('stay cool') ||
+      lowerText.includes('have a good') || lowerText.includes('take care') ||
+      progress > 0.85) {
     return 'closing'
   }
   
-  // Fallback based on position in conversation
-  if (progress < 0.15) return 'introduction'
+  // Enhanced fallback based on conversation flow
+  // Introduction phase (first 10-15% of conversation)
+  if (progress < 0.12) return 'introduction'
+  
+  // Diagnosis phase (next 25% - understanding the problem)
   if (progress < 0.35) return 'diagnosis'
+  
+  // Solution phase (next 25% - explaining the fix)  
   if (progress < 0.55) return 'solution'
-  if (progress < 0.75) return 'upsell'
-  if (progress < 0.9) return 'maintenance'
+  
+  // Upsell phase (next 15% - additional offerings)
+  if (progress < 0.70) return 'upsell'
+  
+  // Maintenance phase (next 15% - service plans)
+  if (progress < 0.85) return 'maintenance'
+  
+  // Closing phase (final 15%)
   return 'closing'
 }

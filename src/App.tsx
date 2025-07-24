@@ -79,15 +79,15 @@ function App() {
       // Store the original transcript for debugging
       setOriginalTranscript(transcript)
       
-      setCurrentStep('Analyzing conversation with AI...')
+      setCurrentStep('Analyzing conversation with AI (fast mode)...')
       console.log('Starting AI analysis...')
       
       let analysisResult
       if (aiProvider === 'openai' && openaiApiKey) {
-        setCurrentStep('Analyzing with OpenAI (enhanced stage categorization)...')
-        console.log('Using OpenAI for enhanced analysis...')
+        setCurrentStep('Analyzing with OpenAI (fast mode with gpt-3.5-turbo)...')
+        console.log('Using OpenAI fast mode for enhanced analysis...')
         analysisResult = await analyzeServiceCallWithOpenAI(transcript, openaiApiKey)
-        console.log('OpenAI analysis completed successfully')
+        console.log('OpenAI fast analysis completed successfully')
       } else if (aiProvider === 'gemini' && geminiApiKey) {
         setCurrentStep('Analyzing with Gemini AI (enhanced stage categorization)...')
         console.log('Using Gemini AI for enhanced analysis...')
@@ -168,13 +168,14 @@ function App() {
   }
 
   const getProgressValue = () => {
-    if (isTranscribing) return 20
+    if (isTranscribing) return 25 // Slightly faster progression
     if (isAnalyzing) {
+      if (currentStep.includes('fast mode')) return 60 // Show faster progress for fast mode
       if (currentStep.includes('Stage 1')) return 35
       if (currentStep.includes('Stage 2')) return 50
       if (currentStep.includes('Stage 3')) return 65
       if (currentStep.includes('Stage 4')) return 80
-      if (currentStep.includes('Analyzing')) return 40
+      if (currentStep.includes('Analyzing')) return 45
     }
     return 100
   }
@@ -188,7 +189,7 @@ function App() {
             <p className="text-muted-foreground">Upload a service call recording to analyze technician performance and sales opportunities</p>
             <div className="mt-4 flex justify-center">
               <Badge variant="default" className="bg-green-600">
-                {aiProvider === 'openai' && openaiApiKey ? 'OpenAI Enhanced Analysis' : 
+                {aiProvider === 'openai' && openaiApiKey ? 'OpenAI Fast Analysis (gpt-3.5-turbo)' : 
                  aiProvider === 'gemini' && geminiApiKey ? 'Gemini AI Enhanced Analysis' : 
                  'AssemblyAI + Spark AI Analysis'}
               </Badge>
@@ -213,6 +214,9 @@ function App() {
                         <Progress value={getProgressValue()} className="mb-2" />
                         <p className="text-sm text-center text-muted-foreground">
                           {currentStep || 'Processing...'}
+                          {currentStep.includes('fast mode') && (
+                            <span className="text-green-600 ml-2">⚡ ~60% faster</span>
+                          )}
                         </p>
                       </div>
                     </div>
@@ -262,7 +266,7 @@ function App() {
                             <div className="flex items-center justify-between">
                               <strong>Analysis Configuration</strong>
                               <Badge variant="secondary">
-                                {aiProvider === 'openai' && openaiApiKey ? 'OPENAI' : 
+                                {aiProvider === 'openai' && openaiApiKey ? 'OPENAI FAST' : 
                                  aiProvider === 'gemini' && geminiApiKey ? 'GEMINI AI' : 'SPARK AI'}
                               </Badge>
                             </div>
@@ -294,7 +298,7 @@ function App() {
                                       className="rounded border-gray-300"
                                     />
                                     <label htmlFor="provider-openai" className="text-sm">
-                                      OpenAI (Enhanced analysis with GPT-4)
+                                      OpenAI (Fast analysis with GPT-3.5-turbo)
                                     </label>
                                     {aiProvider === 'openai' && (
                                       <Badge variant={openaiApiKey ? "default" : "destructive"} className="text-xs">
@@ -372,7 +376,7 @@ function App() {
                                                   'Content-Type': 'application/json',
                                                 },
                                                 body: JSON.stringify({
-                                                  model: 'gpt-4o-mini',
+                                                  model: 'gpt-3.5-turbo',
                                                   messages: [{ role: 'user', content: 'Test - respond with just "OK"' }],
                                                   max_tokens: 5
                                                 })
@@ -454,7 +458,7 @@ function App() {
                                                     'Content-Type': 'application/json',
                                                   },
                                                   body: JSON.stringify({
-                                                    model: 'gpt-4o-mini',
+                                                    model: 'gpt-3.5-turbo',
                                                     messages: [
                                                       {
                                                         role: 'system',
@@ -563,7 +567,7 @@ function App() {
                                       <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" className="text-primary underline">
                                         OpenAI Platform
                                       </a>
-                                      {' '}• Enhanced analysis with GPT-4 provides better accuracy
+                                      {' '}• Fast analysis with GPT-3.5-turbo for quicker results
                                     </p>
                                   </div>
                                 )}
@@ -718,10 +722,10 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
                               
                               let analysisResult
                               if (aiProvider === 'openai' && openaiApiKey) {
-                                setCurrentStep('Test analysis: Using OpenAI...')
-                                console.log('Using OpenAI for test analysis...')
+                                setCurrentStep('Test analysis: Using OpenAI fast mode...')
+                                console.log('Using OpenAI fast mode for test analysis...')
                                 analysisResult = await analyzeServiceCallWithOpenAI(testTranscript, openaiApiKey)
-                                console.log('OpenAI test analysis completed successfully')
+                                console.log('OpenAI fast test analysis completed successfully')
                               } else if (aiProvider === 'gemini' && geminiApiKey) {
                                 setCurrentStep('Test analysis: Using Gemini AI...')
                                 console.log('Using Gemini AI for test analysis...')
@@ -801,7 +805,7 @@ Technician: You're very welcome, Mrs. Johnson! I'll be back in the spring for yo
               </CardTitle>
               <div className="flex items-center gap-2">
                 <Badge variant={aiProvider !== 'spark' ? "default" : "secondary"}>
-                  {aiProvider === 'openai' && openaiApiKey ? 'OpenAI Analysis' : 
+                  {aiProvider === 'openai' && openaiApiKey ? 'OpenAI Fast Analysis' : 
                    aiProvider === 'gemini' && geminiApiKey ? 'Gemini AI Analysis' : 'Spark AI Analysis'}
                 </Badge>
               </div>

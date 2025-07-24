@@ -42,60 +42,102 @@ export class OpenAIAnalyzer {
       throw new Error('Empty response from OpenAI')
     }
 
+    // Log the raw response for debugging
+    console.log('Raw OpenAI response length:', response.length)
+    console.log('Raw OpenAI response preview:', response.substring(0, 200))
+
     let cleaned = response.trim()
     
-    // Remove markdown code blocks
-    cleaned = cleaned.replace(/^```json\s*\n?/i, '')
-    cleaned = cleaned.replace(/^```\s*\n?/, '')
-    cleaned = cleaned.replace(/\n?```\s*$/, '')
-    cleaned = cleaned.replace(/^json\s*\n?/i, '')
+    // Remove multiple types of markdown code block indicators
+    const codeBlockPatterns = [
+      /^```json\s*\n?/i,
+      /^```\s*\n?/,
+      /\n?```\s*$/,
+      /^json\s*\n?/i
+    ]
+    
+    for (const pattern of codeBlockPatterns) {
+      cleaned = cleaned.replace(pattern, '')
+    }
+    
+    // Remove any leading/trailing whitespace again
     cleaned = cleaned.trim()
     
-    // Extract JSON from response
+    // Handle cases where the AI includes explanatory text before/after JSON
+    // Look for the first { or [ and last } or ]
     const jsonObjectMatch = cleaned.match(/^.*?(\{.*\}).*?$/s)
     const jsonArrayMatch = cleaned.match(/^.*?(\[.*\]).*?$/s)
     
     if (jsonObjectMatch && jsonObjectMatch[1]) {
+      const candidate = jsonObjectMatch[1].trim()
       try {
-        JSON.parse(jsonObjectMatch[1])
-        return jsonObjectMatch[1]
-      } catch {}
+        JSON.parse(candidate)
+        console.log('Successfully extracted JSON object')
+        return candidate
+      } catch {
+        console.log('Failed to parse extracted JSON object')
+      }
     }
     
     if (jsonArrayMatch && jsonArrayMatch[1]) {
+      const candidate = jsonArrayMatch[1].trim()
       try {
-        JSON.parse(jsonArrayMatch[1])
-        return jsonArrayMatch[1]
-      } catch {}
+        JSON.parse(candidate)
+        console.log('Successfully extracted JSON array')
+        return candidate
+      } catch {
+        console.log('Failed to parse extracted JSON array')
+      }
     }
     
-    // Aggressive extraction
+    // Try to parse the entire cleaned response as a fallback
+    try {
+      JSON.parse(cleaned)
+      console.log('Successfully parsed entire cleaned response')
+      return cleaned
+    } catch (parseError) {
+      console.error('Failed to parse cleaned response:', parseError)
+    }
+    
+    // More aggressive cleaning - look for JSON boundaries
     const firstBrace = cleaned.indexOf('{')
     const firstBracket = cleaned.indexOf('[')
     const lastBrace = cleaned.lastIndexOf('}')
     const lastBracket = cleaned.lastIndexOf(']')
     
+    // Try object extraction
     if (firstBrace !== -1 && lastBrace !== -1 && firstBrace < lastBrace) {
       const objectCandidate = cleaned.substring(firstBrace, lastBrace + 1)
       try {
         JSON.parse(objectCandidate)
+        console.log('Successfully extracted object with aggressive parsing')
         return objectCandidate
-      } catch {}
+      } catch {
+        console.log('Aggressive object extraction failed')
+      }
     }
     
+    // Try array extraction
     if (firstBracket !== -1 && lastBracket !== -1 && firstBracket < lastBracket) {
       const arrayCandidate = cleaned.substring(firstBracket, lastBracket + 1)
       try {
         JSON.parse(arrayCandidate)
+        console.log('Successfully extracted array with aggressive parsing')
         return arrayCandidate
-      } catch {}
+      } catch {
+        console.log('Aggressive array extraction failed')
+      }
     }
     
-    throw new Error(`Could not extract valid JSON from response: "${cleaned.substring(0, 100)}..."`)
+    // If all else fails, log the problematic response and throw a descriptive error
+    console.error('Failed to extract valid JSON from response:')
+    console.error('Cleaned response:', cleaned.substring(0, 500))
+    
+    throw new Error(`Could not extract valid JSON from OpenAI response. Response preview: "${cleaned.substring(0, 100)}..."`)
   }
 
   private async makeRequest(messages: any[], temperature = 0.3, fastMode = true): Promise<any> {
-    // Use faster model for most operations
+    // Use faster model for most operations, fallback to gpt-4o-mini for complex analysis
     const model = fastMode ? 'gpt-3.5-turbo' : 'gpt-4o-mini'
     
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -108,7 +150,7 @@ export class OpenAIAnalyzer {
         model,
         messages,
         temperature,
-        max_tokens: fastMode ? 2000 : 4000
+        max_tokens: fastMode ? 2000 : 4000 // Smaller tokens for faster response
       })
     })
 
@@ -136,6 +178,7 @@ export class OpenAIAnalyzer {
   }
 
   async segmentTranscript(transcript: string): Promise<any[]> {
+    // Fast segmentation with simplified prompt
     const prompt = `Analyze this service call transcript and return a JSON array. Each element needs: speaker, timestamp, text, stage.
 
 Stages: introduction, diagnosis, solution, upsell, maintenance, closing
@@ -145,29 +188,45 @@ Return only valid JSON array starting with [ and ending with ]:
 ${transcript.length > 8000 ? transcript.substring(0, 8000) + '...[truncated]' : transcript}`
 
     const messages = [
-      { role: 'system', content: 'Return only JSON arrays. No markdown, no explanations.' },
-      { role: 'user', content: prompt }
+      {
+        role: 'system',
+        content: 'Return only JSON arrays. No markdown, no explanations.'
+      },
+      {
+        role: 'user',
+        content: prompt
+      }
     ]
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    // Use fast mode with retry logic
+    let lastError: Error | null = null
+    
+    for (let attempt = 1; attempt <= 2; attempt++) { // Reduced attempts for speed
       try {
         console.log(`Fast segmentation attempt ${attempt}/2`)
-        const response = await this.makeRequest(messages, 0.1, true)
+        const response = await this.makeRequest(messages, 0.1, true) // Fast mode
         
         const cleanedResponse = this.cleanJsonResponse(response)
         const segments = JSON.parse(cleanedResponse)
         
-        if (!Array.isArray(segments) || segments.length === 0) {
-          throw new Error('Invalid segments returned')
+        if (!Array.isArray(segments)) {
+          throw new Error('Response is not an array')
+        }
+        
+        // Quick validation
+        if (segments.length === 0) {
+          throw new Error('No segments returned')
         }
         
         console.log(`Successfully parsed ${segments.length} segments`)
         return segments
         
       } catch (parseError) {
+        lastError = parseError instanceof Error ? parseError : new Error(String(parseError))
         console.error(`Fast attempt ${attempt}/2 failed:`, parseError)
+        
         if (attempt === 2) {
-          throw new Error(`Fast segmentation failed: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`)
+          throw new Error(`Fast segmentation failed: ${lastError.message}`)
         }
       }
     }
@@ -175,6 +234,7 @@ ${transcript.length > 8000 ? transcript.substring(0, 8000) + '...[truncated]' : 
     throw new Error('Fast segmentation failed after retries')
   }
 
+  // New combined analysis method for speed
   async analyzeCombined(segments: any[]): Promise<{
     compliance: CallAnalysis['compliance'],
     salesInsights: CallAnalysis['salesInsights']
@@ -202,70 +262,134 @@ Quality levels: "Excellent", "Good", "Fair", "Poor"
 Segments: ${JSON.stringify(segments.slice(0, 50), null, 0)}`
 
     const messages = [
-      { role: 'system', content: 'Return only JSON objects. No markdown, no explanations.' },
-      { role: 'user', content: combinedPrompt }
+      {
+        role: 'system',
+        content: 'Return only JSON objects. No markdown, no explanations.'
+      },
+      {
+        role: 'user',
+        content: combinedPrompt
+      }
     ]
 
-    const response = await this.makeRequest(messages, 0.1, true)
+    const response = await this.makeRequest(messages, 0.1, true) // Fast mode
     
     try {
       const cleanedResponse = this.cleanJsonResponse(response)
       return JSON.parse(cleanedResponse)
     } catch (parseError) {
+      console.error('Combined analysis parse error:', parseError)
       throw new Error(`Combined analysis parsing failed: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
     }
   }
+    const stageSegments = {
+      introduction: segments.filter(s => s.stage === 'introduction'),
+      diagnosis: segments.filter(s => s.stage === 'diagnosis'),
+      solution: segments.filter(s => s.stage === 'solution'),
+      upsell: segments.filter(s => s.stage === 'upsell'),
+      maintenance: segments.filter(s => s.stage === 'maintenance'),
+      closing: segments.filter(s => s.stage === 'closing')
+    }
 
-  async analyzeCompliance(segments: any[]): Promise<CallAnalysis['compliance']> {
-    const analysisPrompt = `Analyze service call compliance. Return JSON:
+    const analysisPrompt = `You are a service call quality analyst. Analyze each stage for compliance with best practices.
+
+CRITICAL: You must respond with ONLY a valid JSON object. Do not include:
+- Markdown formatting (no \`\`\`json or \`\`\`)
+- Explanatory text before or after the JSON
+- Code blocks
+- Any other text
+
+The response must start with { and end with }. For each stage, determine:
+1. present: true/false if the stage occurred
+2. quality: "Excellent", "Good", "Fair", or "Poor" 
+3. notes: specific observations about what was done well or missed
+
+Stage segments to analyze:
+${JSON.stringify(stageSegments, null, 2)}
+
+You must return this exact JSON structure:
 {
-  "introduction": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string},
-  "diagnosis": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string},
-  "solution": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string},
-  "upsell": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string},
-  "maintenance": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string},
-  "closing": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string}
+  "introduction": {"present": boolean, "quality": string, "notes": string},
+  "diagnosis": {"present": boolean, "quality": string, "notes": string},
+  "solution": {"present": boolean, "quality": string, "notes": string},
+  "upsell": {"present": boolean, "quality": string, "notes": string},
+  "maintenance": {"present": boolean, "quality": string, "notes": string},
+  "closing": {"present": boolean, "quality": string, "notes": string}
 }
 
-Data: ${JSON.stringify(segments.slice(0, 30), null, 0)}`
+Remember: ONLY return the JSON object, nothing else.`
 
     const messages = [
-      { role: 'system', content: 'Return only JSON objects. No markdown.' },
-      { role: 'user', content: analysisPrompt }
+      {
+        role: 'system',
+        content: 'You are a JSON-only response system. You must ONLY return valid JSON objects without any markdown formatting, explanations, or additional text. Your entire response must be parseable as JSON.'
+      },
+      {
+        role: 'user',
+        content: analysisPrompt
+      }
     ]
 
-    const response = await this.makeRequest(messages, 0.1, false)
+    const response = await this.makeRequest(messages, 0.1)
     
     try {
       const cleanedResponse = this.cleanJsonResponse(response)
       return JSON.parse(cleanedResponse)
     } catch (parseError) {
-      throw new Error(`Compliance analysis parsing failed: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
+      console.error('Failed to parse OpenAI compliance response:', parseError)
+      console.error('Raw response length:', response?.length || 0)
+      console.error('Raw response preview:', response?.substring(0, 500) || 'No response')
+      throw new Error(`Failed to parse OpenAI compliance response: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
     }
   }
 
   async analyzeSalesInsights(segments: any[]): Promise<CallAnalysis['salesInsights']> {
-    const salesPrompt = `Analyze sales performance. Return JSON:
+    const salesPrompt = `You are a sales performance analyst. Analyze this service call transcript for sales performance.
+
+CRITICAL: You must respond with ONLY a valid JSON object. Do not include:
+- Markdown formatting (no \`\`\`json or \`\`\`)
+- Explanatory text before or after the JSON
+- Code blocks
+- Any other text
+
+The response must start with { and end with }. Identify:
+1. opportunities: potential sales opportunities mentioned or hinted at by the customer
+2. successful: sales techniques or offers that worked well
+3. missed: opportunities the technician could have capitalized on but didn't
+
+Transcript segments to analyze:
+${JSON.stringify(segments, null, 2)}
+
+You must return this exact JSON structure:
 {
-  "opportunities": ["array of potential sales opportunities"],
-  "successful": ["array of successful sales actions"], 
-  "missed": ["array of missed opportunities"]
+  "opportunities": ["string array of opportunities identified"],
+  "successful": ["string array of successful sales actions"], 
+  "missed": ["string array of missed opportunities"]
 }
 
-Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
+Remember: ONLY return the JSON object, nothing else.`
 
     const messages = [
-      { role: 'system', content: 'Return only JSON objects. No markdown.' },
-      { role: 'user', content: salesPrompt }
+      {
+        role: 'system',
+        content: 'You are a JSON-only response system. You must ONLY return valid JSON objects without any markdown formatting, explanations, or additional text. Your entire response must be parseable as JSON.'
+      },
+      {
+        role: 'user',
+        content: salesPrompt
+      }
     ]
 
-    const response = await this.makeRequest(messages, 0.1, false)
+    const response = await this.makeRequest(messages, 0.1)
     
     try {
       const cleanedResponse = this.cleanJsonResponse(response)
       return JSON.parse(cleanedResponse)
     } catch (parseError) {
-      throw new Error(`Sales analysis parsing failed: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
+      console.error('Failed to parse OpenAI sales response:', parseError)
+      console.error('Raw response length:', response?.length || 0)
+      console.error('Raw response preview:', response?.substring(0, 500) || 'No response')
+      throw new Error(`Failed to parse OpenAI sales response: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
     }
   }
 
@@ -376,11 +500,75 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
       throw new Error(`OpenAI AI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
+
+  // Keep the original methods as fallbacks
+  async analyzeCompliance(segments: any[]): Promise<CallAnalysis['compliance']> {
+    const stageSegments = {
+      introduction: segments.filter(s => s.stage === 'introduction'),
+      diagnosis: segments.filter(s => s.stage === 'diagnosis'),
+      solution: segments.filter(s => s.stage === 'solution'),
+      upsell: segments.filter(s => s.stage === 'upsell'),
+      maintenance: segments.filter(s => s.stage === 'maintenance'),
+      closing: segments.filter(s => s.stage === 'closing')
+    }
+
+    const analysisPrompt = `Analyze service call compliance. Return JSON:
+{
+  "introduction": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string},
+  "diagnosis": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string},
+  "solution": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string},
+  "upsell": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string},
+  "maintenance": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string},
+  "closing": {"present": boolean, "quality": "Excellent/Good/Fair/Poor", "notes": string}
+}
+
+Data: ${JSON.stringify(stageSegments, null, 0)}`
+
+    const messages = [
+      { role: 'system', content: 'Return only JSON objects. No markdown.' },
+      { role: 'user', content: analysisPrompt }
+    ]
+
+    const response = await this.makeRequest(messages, 0.1, false) // Fallback mode
+    
+    try {
+      const cleanedResponse = this.cleanJsonResponse(response)
+      return JSON.parse(cleanedResponse)
+    } catch (parseError) {
+      throw new Error(`Compliance analysis parsing failed: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
+    }
+  }
+
+  async analyzeSalesInsights(segments: any[]): Promise<CallAnalysis['salesInsights']> {
+    const salesPrompt = `Analyze sales performance. Return JSON:
+{
+  "opportunities": ["array of potential sales opportunities"],
+  "successful": ["array of successful sales actions"], 
+  "missed": ["array of missed opportunities"]
+}
+
+Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
+
+    const messages = [
+      { role: 'system', content: 'Return only JSON objects. No markdown.' },
+      { role: 'user', content: salesPrompt }
+    ]
+
+    const response = await this.makeRequest(messages, 0.1, false) // Fallback mode
+    
+    try {
+      const cleanedResponse = this.cleanJsonResponse(response)
+      return JSON.parse(cleanedResponse)
+    } catch (parseError) {
+      throw new Error(`Sales analysis parsing failed: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`)
+    }
+  }
 }
 
 // Test function for API key validation
 export async function testOpenAIAPI(apiKey: string): Promise<{ success: boolean; error?: string }> {
   try {
+    // Simple fast test request using gpt-3.5-turbo for speed
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {

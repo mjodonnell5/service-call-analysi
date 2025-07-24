@@ -63,8 +63,9 @@ export class GeminiAnalyzer {
     console.log(`Making Gemini API request to: ${this.baseUrl}/${this.config.model}:generateContent`)
     console.log(`Using API key: ${this.config.apiKey.substring(0, 8)}...${this.config.apiKey.substring(this.config.apiKey.length - 4)}`)
     
+    let response: Response
     try {
-      const response = await fetch(url, {
+      response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -101,40 +102,54 @@ export class GeminiAnalyzer {
           ]
         })
       })
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error('Gemini API error response:', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText
-        })
-        
-        // Provide more specific error messages
-        if (response.status === 400) {
-          if (errorText.includes('API_KEY_INVALID') || errorText.includes('invalid API key')) {
-            throw new Error('Invalid Gemini API key. Please check your API key is correct.')
-          } else if (errorText.includes('quota') || errorText.includes('QUOTA_EXCEEDED')) {
-            throw new Error('Gemini API quota exceeded. Please check your billing and usage limits.')
-          } else {
-            throw new Error(`Gemini API request error: ${errorText}`)
-          }
-        } else if (response.status === 403) {
-          throw new Error('Gemini API access forbidden. Check your API key permissions and billing status.')
-        } else if (response.status === 429) {
-          throw new Error('Gemini API rate limit exceeded. Please wait before trying again.')
-        } else {
-          throw new Error(`Gemini API error: ${response.status} - ${errorText}`)
-        }
-      }
     } catch (networkError) {
       if (networkError instanceof TypeError && networkError.message.includes('fetch')) {
         throw new Error('Network error accessing Gemini API. Please check your internet connection.')
       }
-      throw networkError // Re-throw if it's already a handled error
+      // Re-throw any other fetch errors
+      throw new Error(`Network request failed: ${networkError instanceof Error ? networkError.message : 'Unknown error'}`)
     }
 
-    const data = await response.json()
+    // Check response status
+    if (!response.ok) {
+      let errorText: string
+      try {
+        errorText = await response.text()
+      } catch {
+        errorText = 'Unable to read error response'
+      }
+      
+      console.error('Gemini API error response:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorText
+      })
+      
+      // Provide more specific error messages
+      if (response.status === 400) {
+        if (errorText.includes('API_KEY_INVALID') || errorText.includes('invalid API key')) {
+          throw new Error('Invalid Gemini API key. Please check your API key is correct.')
+        } else if (errorText.includes('quota') || errorText.includes('QUOTA_EXCEEDED')) {
+          throw new Error('Gemini API quota exceeded. Please check your billing and usage limits.')
+        } else {
+          throw new Error(`Gemini API request error: ${errorText}`)
+        }
+      } else if (response.status === 403) {
+        throw new Error('Gemini API access forbidden. Check your API key permissions and billing status.')
+      } else if (response.status === 429) {
+        throw new Error('Gemini API rate limit exceeded. Please wait before trying again.')
+      } else {
+        throw new Error(`Gemini API error: ${response.status} - ${errorText}`)
+      }
+    }
+
+    // Parse response JSON
+    let data: any
+    try {
+      data = await response.json()
+    } catch (jsonError) {
+      throw new Error('Failed to parse Gemini API response as JSON')
+    }
     
     // Better error handling for Gemini responses
     if (!data.candidates || data.candidates.length === 0) {

@@ -41,25 +41,29 @@ class AssemblyAIProvider implements TranscriptionProvider {
     const { upload_url } = await uploadResponse.json()
 
     // Step 2: Start transcription with speaker diarization
+    const transcriptionConfig = {
+      audio_url: upload_url,
+      speaker_labels: true,
+      speakers_expected: 2, // Exactly 2 speakers: technician + customer
+      auto_chapters: false,
+      filter_profanity: false,
+      format_text: true,
+      punctuate: true,
+      dual_channel: false,
+      language_detection: true,
+      disfluencies: false,
+      speech_threshold: 0.5
+    }
+    
+    console.log('AssemblyAI transcription config:', transcriptionConfig)
+    
     const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
       method: 'POST',
       headers: {
         'authorization': apiKey,
         'content-type': 'application/json'
       },
-      body: JSON.stringify({
-        audio_url: upload_url,
-        speaker_labels: true, // Enable speaker identification
-        speakers_expected: 2, // Exactly 2 speakers for service calls (remove speaker_options if present)
-        auto_chapters: false,
-        filter_profanity: false,
-        format_text: true,
-        punctuate: true,
-        dual_channel: false,
-        language_detection: true,
-        disfluencies: false, // Remove filler words
-        speech_threshold: 0.5 // Improve accuracy
-      })
+      body: JSON.stringify(transcriptionConfig)
     })
 
     if (!transcriptResponse.ok) {
@@ -117,10 +121,29 @@ class AssemblyAIProvider implements TranscriptionProvider {
     console.log('Has text:', !!result.text)
     console.log('Text length:', result.text?.length || 0)
     console.log('Status:', result.status)
+    console.log('Speaker labels enabled:', result.speaker_labels)
+    console.log('Speakers expected:', result.speakers_expected)
     
     if (result.utterances && result.utterances.length > 0) {
       console.log('Sample utterance structure:', result.utterances[0])
       console.log('All speakers detected:', [...new Set(result.utterances.map((u: any) => u.speaker))])
+      console.log('Speaker confidence scores:', result.utterances.slice(0, 3).map((u: any) => ({ 
+        speaker: u.speaker, 
+        confidence: u.confidence,
+        text_preview: u.text?.substring(0, 50) 
+      })))
+    } else {
+      console.log('⚠️  NO UTTERANCES FOUND - This means speaker diarization failed or was not enabled')
+      console.log('AssemblyAI configuration used:')
+      console.log('- speaker_labels: true')
+      console.log('- speakers_expected: 2') 
+      console.log('Raw result summary:', {
+        has_text: !!result.text,
+        has_words: !!result.words,
+        has_utterances: !!result.utterances,
+        audio_duration: result.audio_duration_seconds,
+        confidence: result.confidence
+      })
     }
 
     if (!result.utterances || result.utterances.length === 0) {

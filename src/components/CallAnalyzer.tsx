@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { transcriptionService, TranscriptionConfig, TranscriptionResult } from '@/services/transcription'
 import { createGeminiAnalyzer, GeminiAnalysisResult } from '@/services/gemini'
-import { OpenAIAnalyzer } from '@/services/openai'
+import { OpenAIAnalyzer } from '@/services/openai-simple'
 import { TranscriptProcessor } from '@/services/transcript-processor'
 
 interface AnalysisResult {
@@ -30,7 +30,7 @@ interface AnalysisResult {
   }
 }
 
-// Enhanced analysis using OpenAI API with transcript processing and markdown conversion
+// Simplified analysis using OpenAI API
 export async function analyzeServiceCallWithOpenAI(transcript: string, openaiApiKey: string): Promise<AnalysisResult> {
   if (!transcript || transcript.trim().length === 0) {
     throw new Error('Empty transcript provided for analysis')
@@ -40,35 +40,34 @@ export async function analyzeServiceCallWithOpenAI(transcript: string, openaiApi
     throw new Error('OpenAI API key is required for enhanced analysis')
   }
 
-  console.log('Starting OpenAI analysis with transcript processing...')
-  console.log('Original transcript length:', transcript.length, 'characters')
-  console.log('Using API key:', openaiApiKey.substring(0, 8) + '...')
+  console.log('Starting simplified OpenAI analysis...')
+  console.log('Input length:', transcript.length, 'characters')
   
   try {
-    // Step 1: Process and truncate the AssemblyAI transcript
-    console.log('Processing AssemblyAI transcript (truncating to first 10 exchanges)...')
-    const processedTranscript = TranscriptProcessor.processAssemblyAITranscript(transcript, 10)
+    // Convert transcript to markdown format if needed
+    let processedMarkdown: string
     
-    console.log('Transcript processing completed:')
-    console.log(`- Original length: ${processedTranscript.originalLength} chars`)
-    console.log(`- Processed length: ${processedTranscript.truncatedLength} chars`)
-    console.log(`- Exchange count: ${processedTranscript.exchangeCount}`)
-    console.log(`- Was truncated: ${processedTranscript.truncated}`)
-    console.log(`- Summary: ${processedTranscript.summary}`)
-    
-    // Step 2: Analyze the markdown transcript with OpenAI
-    console.log('Analyzing processed markdown with OpenAI...')
+    if (transcript.includes('# Service Call Transcript') || transcript.includes('### Exchange')) {
+      console.log('Input is already markdown format')
+      processedMarkdown = transcript
+    } else {
+      console.log('Converting to markdown format...')
+      const processedResult = TranscriptProcessor.processAssemblyAITranscript(transcript)
+      processedMarkdown = processedResult.markdown
+    }
+
+    // Send to OpenAI for analysis
+    console.log('Analyzing with OpenAI...')
     const openaiAnalyzer = new OpenAIAnalyzer(openaiApiKey)
-    const result = await openaiAnalyzer.analyzeServiceCall(processedTranscript.markdown)
+    const result = await openaiAnalyzer.analyzeServiceCall(processedMarkdown)
     
     console.log('OpenAI analysis completed successfully')
-    console.log('Final result segments:', result.transcript.segments.length)
-    console.log('Final result compliance stages:', Object.keys(result.compliance))
+    console.log('Segments processed:', result.transcript.segments.length)
     
     return result
   } catch (error) {
     console.error('OpenAI analysis failed:', error)
-    throw new Error(`OpenAI AI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    throw new Error(`OpenAI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 }
 
@@ -82,13 +81,26 @@ export async function analyzeServiceCallWithGemini(transcript: string, geminiApi
     throw new Error('Gemini API key is required for enhanced analysis')
   }
 
-  console.log('Starting Gemini AI analysis of transcript...')
-  console.log('Transcript length:', transcript.length, 'characters')
+  console.log('Starting Gemini AI analysis...')
+  console.log('Input length:', transcript.length, 'characters')
   console.log('Using API key:', geminiApiKey.substring(0, 8) + '...')
   
   try {
+    // Check if the input is already processed markdown or raw transcript
+    const isMarkdown = transcript.includes('# Service Call Transcript') || transcript.includes('### Exchange')
+    
+    let inputForAnalysis: string
+    
+    if (isMarkdown) {
+      console.log('Input appears to be processed markdown, using directly...')
+      inputForAnalysis = transcript
+    } else {
+      console.log('Input appears to be raw transcript, using as-is for Gemini...')
+      inputForAnalysis = transcript
+    }
+    
     const geminiAnalyzer = createGeminiAnalyzer(geminiApiKey)
-    const result = await geminiAnalyzer.analyzeServiceCall(transcript)
+    const result = await geminiAnalyzer.analyzeServiceCall(inputForAnalysis)
     
     console.log('Gemini raw result structure:')
     console.log('- Call Type:', result.callType)
@@ -149,6 +161,13 @@ export async function analyzeServiceCallWithGemini(transcript: string, geminiApi
     }
 
     console.log('Gemini analysis completed successfully')
+    
+    // Defensive check for Gemini result
+    if (!analysisResult.transcript || !Array.isArray(analysisResult.transcript.segments)) {
+      console.error('Invalid Gemini result structure:', analysisResult)
+      throw new Error('Gemini analysis returned invalid result structure')
+    }
+    
     console.log('Final result segments:', analysisResult.transcript.segments.length)
     console.log('Final result compliance stages:', Object.keys(analysisResult.compliance))
     

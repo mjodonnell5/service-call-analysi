@@ -8,6 +8,13 @@ interface InsightsPanelProps {
     callType: string
     overallScore: number
     compliance: Record<string, { present: boolean; quality: string; notes: string }>
+    detailedRecommendations?: {
+      compliance: Array<{ priority: string; text: string }>
+      salesTraining: Array<{ priority: string; text: string }>
+      communication: Array<{ priority: string; text: string }>
+      processOptimization: Array<{ priority: string; text: string }>
+      coachingPriorities: Array<{ priority: string; text: string }>
+    }
     salesInsights: {
       opportunities: string[]
       successful: string[]
@@ -17,13 +24,56 @@ interface InsightsPanelProps {
 }
 
 export function InsightsPanel({ analysis }: InsightsPanelProps) {
-  const getRecommendations = () => {
-    const recommendations: Array<{
-      type: string
-      priority: string
-      message: string
-      stage: string
-    }> = []
+  const getPriorityColor = (priority: string) => {
+    switch (priority.toLowerCase()) {
+      case 'high': return 'destructive'
+      case 'medium': return 'default'
+      case 'low': return 'secondary'
+      default: return 'default'
+    }
+  }
+
+  const getPriorityIcon = (priority: string) => {
+    switch (priority.toLowerCase()) {
+      case 'high': return <Warning className="h-4 w-4" />
+      case 'medium': return <TrendUp className="h-4 w-4" />
+      case 'low': return <Lightbulb className="h-4 w-4" />
+      default: return <Lightbulb className="h-4 w-4" />
+    }
+  }
+
+  const renderRecommendationSection = (title: string, recommendations: Array<{ priority: string; text: string }>, icon: React.ReactNode) => {
+    if (!recommendations || recommendations.length === 0) return null
+
+    return (
+      <Card className="mb-4">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            {icon}
+            {title}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {recommendations.map((rec, index) => (
+            <div key={index} className="flex items-start gap-3 p-3 border rounded-lg bg-gray-50/50">
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {getPriorityIcon(rec.priority)}
+                <Badge variant={getPriorityColor(rec.priority)} className="text-xs whitespace-nowrap">
+                  {rec.priority.toUpperCase()}
+                </Badge>
+              </div>
+              <div className="text-sm leading-relaxed text-gray-700 flex-1 min-w-0">
+                {rec.text}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const getSimpleRecommendations = () => {
+    const recommendations: Array<{type: string; priority: 'high' | 'medium' | 'low'; message: string}> = [];
     
     // Compliance recommendations
     Object.entries(analysis.compliance).forEach(([stage, data]) => {
@@ -31,15 +81,13 @@ export function InsightsPanel({ analysis }: InsightsPanelProps) {
         recommendations.push({
           type: 'compliance',
           priority: 'high',
-          message: `Missing ${stage} stage - ensure technicians follow complete call protocol`,
-          stage
+          message: `Missing ${stage} stage - ensure technicians follow complete call protocol`
         })
       } else if (data.quality === 'Poor' || data.quality === 'Fair') {
         recommendations.push({
           type: 'improvement',
           priority: 'medium',
-          message: `Improve ${stage} quality - ${data.notes.toLowerCase()}`,
-          stage
+          message: `Improve ${stage} quality - ${data.notes.toLowerCase()}`
         })
       }
     })
@@ -49,8 +97,7 @@ export function InsightsPanel({ analysis }: InsightsPanelProps) {
       recommendations.push({
         type: 'sales',
         priority: 'high',
-        message: `${analysis.salesInsights.missed.length} sales opportunities missed - provide additional sales training`,
-        stage: 'sales'
+        message: `${analysis.salesInsights.missed.length} sales opportunities missed - provide additional sales training`
       })
     }
 
@@ -58,8 +105,7 @@ export function InsightsPanel({ analysis }: InsightsPanelProps) {
       recommendations.push({
         type: 'opportunity',
         priority: 'medium',
-        message: `${analysis.salesInsights.opportunities.length} potential opportunities identified - train technicians to recognize these signals`,
-        stage: 'training'
+        message: `${analysis.salesInsights.opportunities.length} potential opportunities identified - train technicians to recognize these signals`
       })
     }
 
@@ -77,8 +123,6 @@ export function InsightsPanel({ analysis }: InsightsPanelProps) {
     if (score >= 60) return 'Good'
     return 'Needs Improvement'
   }
-
-  const recommendations = getRecommendations()
 
   return (
     <div className="space-y-6">
@@ -124,50 +168,90 @@ export function InsightsPanel({ analysis }: InsightsPanelProps) {
         </CardContent>
       </Card>
 
-      {/* Recommendations */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Lightbulb size={20} />
-            Recommendations
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {recommendations.length > 0 ? (
-            recommendations.map((rec, index) => (
-              <Alert key={index} className={
-                rec.priority === 'high' ? 'border-destructive/20 bg-destructive/5' :
-                rec.priority === 'medium' ? 'border-yellow-500/20 bg-yellow-50' :
-                'border-blue-500/20 bg-blue-50'
-              }>
-                <div className="flex items-start gap-2">
-                  {rec.priority === 'high' && <Warning className="h-4 w-4 text-destructive mt-0.5" />}
-                  {rec.priority === 'medium' && <TrendUp className="h-4 w-4 text-yellow-600 mt-0.5" />}
-                  {rec.priority === 'low' && <Lightbulb className="h-4 w-4 text-blue-600 mt-0.5" />}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge variant="outline" className="text-xs">
-                        {rec.type.toUpperCase()}
-                      </Badge>
-                      <Badge variant={rec.priority === 'high' ? 'destructive' : rec.priority === 'medium' ? 'secondary' : 'default'} className="text-xs">
-                        {rec.priority.toUpperCase()}
-                      </Badge>
+      {/* Detailed Recommendations */}
+      {analysis.detailedRecommendations ? (
+        <div className="space-y-6">
+          <h2 className="text-lg font-semibold">Detailed Recommendations</h2>
+          
+          {/* Grid layout for horizontal arrangement */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+            {renderRecommendationSection(
+              'Compliance Improvements',
+              analysis.detailedRecommendations.compliance,
+              <CheckCircle className="h-5 w-5 text-blue-600" />
+            )}
+            
+            {renderRecommendationSection(
+              'Sales Training',
+              analysis.detailedRecommendations.salesTraining,
+              <TrendUp className="h-5 w-5 text-green-600" />
+            )}
+            
+            {renderRecommendationSection(
+              'Communication Enhancement',
+              analysis.detailedRecommendations.communication,
+              <Lightbulb className="h-5 w-5 text-purple-600" />
+            )}
+            
+            {renderRecommendationSection(
+              'Process Optimization',
+              analysis.detailedRecommendations.processOptimization,
+              <Warning className="h-5 w-5 text-orange-600" />
+            )}
+            
+            {renderRecommendationSection(
+              'Coaching Priorities',
+              analysis.detailedRecommendations.coachingPriorities,
+              <XCircle className="h-5 w-5 text-red-600" />
+            )}
+          </div>
+        </div>
+      ) : (
+        /* Fallback Simple Recommendations */
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Lightbulb size={20} />
+              Recommendations
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {getSimpleRecommendations().length > 0 ? (
+              getSimpleRecommendations().map((rec, index) => (
+                <Alert key={index} className={
+                  rec.priority === 'high' ? 'border-destructive/20 bg-destructive/5' :
+                  rec.priority === 'medium' ? 'border-yellow-500/20 bg-yellow-50' :
+                  'border-blue-500/20 bg-blue-50'
+                }>
+                  <div className="flex items-start gap-2">
+                    {rec.priority === 'high' && <Warning className="h-4 w-4 text-destructive mt-0.5" />}
+                    {rec.priority === 'medium' && <TrendUp className="h-4 w-4 text-yellow-600 mt-0.5" />}
+                    {rec.priority === 'low' && <Lightbulb className="h-4 w-4 text-blue-600 mt-0.5" />}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge variant="outline" className="text-xs">
+                          {rec.type.toUpperCase()}
+                        </Badge>
+                        <Badge variant={rec.priority === 'high' ? 'destructive' : rec.priority === 'medium' ? 'secondary' : 'default'} className="text-xs">
+                          {rec.priority.toUpperCase()}
+                        </Badge>
+                      </div>
+                      <AlertDescription>{rec.message}</AlertDescription>
                     </div>
-                    <AlertDescription>{rec.message}</AlertDescription>
                   </div>
-                </div>
+                </Alert>
+              ))
+            ) : (
+              <Alert className="border-green-500/20 bg-green-50">
+                <CheckCircle className="h-4 w-4 text-green-600" />
+                <AlertDescription>
+                  Excellent performance! This call demonstrates strong adherence to protocols and effective sales practices.
+                </AlertDescription>
               </Alert>
-            ))
-          ) : (
-            <Alert className="border-green-500/20 bg-green-50">
-              <CheckCircle className="h-4 w-4 text-green-600" />
-              <AlertDescription>
-                Excellent performance! This call demonstrates strong adherence to protocols and effective sales practices.
-              </AlertDescription>
-            </Alert>
-          )}
-        </CardContent>
-      </Card>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Key Insights */}
       <Card>

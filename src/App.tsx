@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
-import { useKV } from '@github/spark/hooks'
+import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { CloudArrowUp, ChartBar, CheckCircle, XCircle, TrendUp, Clock, Microphone, Warning, Bug, Download } from '@phosphor-icons/react'
 import { analyzeServiceCallWithGemini, analyzeServiceCallWithOpenAI, useRealTranscription } from '@/components/CallAnalyzer'
+import { FullTranscriptView } from '@/components/FullTranscriptView'
 import { InsightsPanel } from '@/components/InsightsPanel'
 import { DebugPanel } from '@/components/DebugPanel'
 import { TranscriptionConfig } from '@/services/transcription'
@@ -25,10 +26,32 @@ interface CallAnalysis {
     maintenance: { present: boolean; quality: string; notes: string }
     closing: { present: boolean; quality: string; notes: string }
   }
+  complianceSummaries?: {
+    introduction: string
+    diagnosis: string
+    solution: string
+    upsell: string
+    maintenance: string
+    closing: string
+  }
+  detailedRecommendations?: {
+    compliance: Array<{ priority: string; text: string }>
+    salesTraining: Array<{ priority: string; text: string }>
+    communication: Array<{ priority: string; text: string }>
+    processOptimization: Array<{ priority: string; text: string }>
+    coachingPriorities: Array<{ priority: string; text: string }>
+  }
   salesInsights: {
     opportunities: string[]
     successful: string[]
     missed: string[]
+    buyingSignals?: string[]
+    objectionsHandled?: string[]
+    objectionsMissed?: string[]
+    upsellMoments?: string[]
+    priceDiscussions?: string[]
+    customerPainPoints?: string[]
+    followUpOpportunities?: string[]
   }
   transcript: {
     segments: Array<{
@@ -41,21 +64,132 @@ interface CallAnalysis {
 }
 
 function App() {
-  const [analysis, setAnalysis] = useKV<CallAnalysis | null>('call-analysis', null)
-  const [originalTranscript, setOriginalTranscript] = useKV<string | null>('original-transcript', null)
-  const [processedTranscript, setProcessedTranscript] = useKV<ProcessedTranscript | null>('processed-transcript', null)
-  const [rawAssemblyAIData, setRawAssemblyAIData] = useKV<any | null>('raw-assemblyai-data', null)
-  const [transcriptionConfig, setTranscriptionConfig] = useKV<TranscriptionConfig | null>('transcription-config', {
+  const [analysis, setAnalysis] = useLocalStorage<CallAnalysis | null>('call-analysis', null)
+  const [originalTranscript, setOriginalTranscript] = useLocalStorage<string | null>('original-transcript', null)
+  const [processedTranscript, setProcessedTranscript] = useLocalStorage<ProcessedTranscript | null>('processed-transcript', null)
+  const [rawAssemblyAIData, setRawAssemblyAIData] = useLocalStorage<any | null>('raw-assemblyai-data', null)
+  const [transcriptionConfig, setTranscriptionConfig] = useLocalStorage<TranscriptionConfig | null>('transcription-config', {
     provider: 'assemblyai',
     apiKey: '6e1ea8623e884e45b0da2f9b33bb06f9'
   })
-  const [geminiApiKey, setGeminiApiKey] = useKV<string | null>('gemini-api-key', 'AIzaSyAXkbkoculIKMISxHFkP1j7NunKeOYJAlM')
-  const [openaiApiKey, setOpenaiApiKey] = useKV<string | null>('openai-api-key', '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')
-  const [aiProvider, setAiProvider] = useKV<'gemini' | 'openai'>('ai-provider', 'openai')
+  const [geminiApiKey, setGeminiApiKey] = useLocalStorage<string | null>('gemini-api-key', 'AIzaSyAXkbkoculIKMISxHFkP1j7NunKeOYJAlM')
+  const [openaiApiKey, setOpenaiApiKey] = useLocalStorage<string | null>('openai-api-key', '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')
+  const [aiProvider, setAiProvider] = useLocalStorage<'gemini' | 'openai'>('ai-provider', 'openai')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [currentStep, setCurrentStep] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<string | null>(null)
+  
+  // Function to download AssemblyAI raw data as JSON
+  const downloadAssemblyAIData = () => {
+    if (!rawAssemblyAIData) {
+      alert('No AssemblyAI data available to download')
+      return
+    }
+
+    try {
+      // Create a formatted JSON string with proper indentation
+      const jsonString = JSON.stringify(rawAssemblyAIData, null, 2)
+      
+      // Create a Blob with the JSON data
+      const blob = new Blob([jsonString], { type: 'application/json' })
+      
+      // Create download link
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      
+      // Generate filename with timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
+      link.download = `assemblyai-raw-data-${timestamp}.json`
+      
+      // Trigger download
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      // Clean up the URL object
+      URL.revokeObjectURL(url)
+      
+      console.log('AssemblyAI raw data downloaded successfully')
+    } catch (error) {
+      console.error('Error downloading AssemblyAI data:', error)
+      alert('Error downloading AssemblyAI data. Check console for details.')
+    }
+  }
+
+  // Function to download a comprehensive report with both raw data and formatted summary
+  const downloadComprehensiveReport = () => {
+    if (!rawAssemblyAIData && !originalTranscript && !analysis) {
+      alert('No data available to download')
+      return
+    }
+
+    try {
+      // Create comprehensive report object
+      const report = {
+        metadata: {
+          exported_at: new Date().toISOString(),
+          file_name: 'service-call-analysis-report',
+          version: '1.0'
+        },
+        transcription: {
+          provider: 'AssemblyAI',
+          transcript: originalTranscript,
+          processed_transcript: processedTranscript,
+          raw_assemblyai_data: rawAssemblyAIData
+        },
+        analysis: analysis,
+        configuration: {
+          ai_provider: aiProvider,
+          transcription_config: transcriptionConfig
+        }
+      }
+      
+      // Create formatted JSON
+      const jsonString = JSON.stringify(report, null, 2)
+      
+      // Create and download file
+      const blob = new Blob([jsonString], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
+      link.download = `service-call-comprehensive-report-${timestamp}.json`
+      
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      
+      console.log('Comprehensive report downloaded successfully')
+    } catch (error) {
+      console.error('Error downloading comprehensive report:', error)
+      alert('Error downloading report. Check console for details.')
+    }
+  }
+
+  // Function to download the complete transcript with ALL exchanges
+  const downloadFullTranscript = () => {
+    if (!originalTranscript) {
+      alert('No transcript available to download')
+      return
+    }
+
+    try {
+      // Process the full transcript without truncation
+      const fullProcessed = TranscriptProcessor.processAssemblyAITranscript(originalTranscript, 999999) // Very high limit = no truncation
+      
+      // Download the full markdown
+      TranscriptProcessor.downloadMarkdown(fullProcessed)
+      
+      console.log('Full transcript downloaded successfully')
+    } catch (error) {
+      console.error('Error downloading full transcript:', error)
+      alert('Error downloading full transcript. Check console for details.')
+    }
+  }
   
   // Only use real transcription - no fake data
   const { transcribeAudio, isTranscribing } = useRealTranscription(transcriptionConfig || null)
@@ -79,32 +213,37 @@ function App() {
       setOriginalTranscript(transcriptionResult.transcript)
       setRawAssemblyAIData(transcriptionResult.rawData)
       
-      setCurrentStep('Processing transcript (first 10 exchanges)...')
+      setCurrentStep('Processing transcript (all exchanges)...')
       
-      // Process the transcript to truncate and convert to markdown
-      const processed = TranscriptProcessor.processAssemblyAITranscript(transcriptionResult.transcript, 10)
+      // Process the transcript with ALL exchanges for both display and AI analysis
+      const processed = TranscriptProcessor.processAssemblyAITranscript(transcriptionResult.transcript, 999999) // No truncation
       setProcessedTranscript(processed)
+      
+      // Use the same full processed transcript for AI analysis
+      const fullProcessed = processed
       
       console.log('Transcript processing completed:', {
         originalLength: processed.originalLength,
-        truncatedLength: processed.truncatedLength,
+        processedLength: processed.truncatedLength,
         exchangeCount: processed.exchangeCount,
         truncated: processed.truncated
       })
       
-      setCurrentStep('Analyzing conversation with AI (enhanced processing)...')
-      console.log('Starting AI analysis...')
+      setCurrentStep('Analyzing conversation with AI (using full transcript)...')
+      console.log('Starting AI analysis with full transcript...')
       
       let analysisResult
       if (aiProvider === 'openai' && openaiApiKey) {
-        setCurrentStep('Analyzing with OpenAI GPT-3.5-Turbo (processed transcript)...')
-        console.log('Using OpenAI with processed transcript for enhanced analysis...')
-        analysisResult = await analyzeServiceCallWithOpenAI(transcriptionResult.transcript, openaiApiKey)
+        setCurrentStep('Analyzing with OpenAI (simplified direct analysis)...')
+        console.log('Using OpenAI with FULL transcript markdown - File API enables complete analysis without token limits...')
+        // Use the full processed markdown instead of raw transcript
+        analysisResult = await analyzeServiceCallWithOpenAI(fullProcessed.markdown, openaiApiKey)
         console.log('OpenAI analysis completed successfully')
       } else if (aiProvider === 'gemini' && geminiApiKey) {
-        setCurrentStep('Analyzing with Gemini AI (processed transcript)...')
-        console.log('Using Gemini AI with processed transcript for enhanced analysis...')
-        analysisResult = await analyzeServiceCallWithGemini(transcriptionResult.transcript, geminiApiKey)
+        setCurrentStep('Analyzing with Gemini AI (full transcript with all exchanges)...')
+        console.log('Using Gemini AI with FULL transcript markdown for comprehensive analysis...')
+        // Use the full processed markdown instead of raw transcript
+        analysisResult = await analyzeServiceCallWithGemini(fullProcessed.markdown, geminiApiKey)
         console.log('Gemini analysis completed successfully')
       } else {
         throw new Error('No AI provider configured. Please configure OpenAI or Gemini API key.')
@@ -168,10 +307,12 @@ function App() {
     }
   }
 
-  const getComplianceIcon = (present: boolean, quality: string) => {
+  const getComplianceIcon = (present: boolean, quality?: string) => {
     if (!present) return <XCircle className="text-destructive" weight="fill" />
-    if (quality === "Excellent" || quality === "Good") return <CheckCircle className="text-green-600" weight="fill" />
-    return <CheckCircle className="text-yellow-600" weight="fill" />
+    if (quality === "Excellent") return <CheckCircle className="text-green-600" weight="fill" />
+    if (quality === "Good") return <CheckCircle className="text-blue-600" weight="fill" />
+    if (quality === "Fair") return <CheckCircle className="text-yellow-600" weight="fill" />
+    return <CheckCircle className="text-red-600" weight="fill" />
   }
 
   const getStageSegments = (stage: string) => {
@@ -182,6 +323,7 @@ function App() {
     if (isTranscribing) return 25 
     if (isAnalyzing) {
       if (currentStep.includes('Processing transcript')) return 35
+      if (currentStep.includes('File API')) return 75 // File upload and analysis
       if (currentStep.includes('processed transcript')) return 60
       if (currentStep.includes('enhanced processing')) return 45
       if (currentStep.includes('Stage 1')) return 35
@@ -202,13 +344,13 @@ function App() {
             <p className="text-muted-foreground">Upload a service call recording to analyze technician performance and sales opportunities</p>
             <div className="mt-4 flex justify-center">
               <Badge variant="default" className="bg-green-600">
-                {aiProvider === 'openai' && openaiApiKey ? 'AssemblyAI + OpenAI GPT-3.5-Turbo (Optimized)' : 
+                {aiProvider === 'openai' && openaiApiKey ? 'AssemblyAI + OpenAI File API (Complete Analysis)' : 
                  aiProvider === 'gemini' && geminiApiKey ? 'AssemblyAI + Gemini AI Enhanced' : 
                  'Configure AI Provider Required'}
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              ⚡ Optimized processing: Analyzes first 10 exchanges for reliable, fast results
+              🚀 Advanced: File API enables analysis of complete transcripts without token limits
             </p>
           </div>
 
@@ -301,7 +443,7 @@ function App() {
                                       className="rounded border-gray-300"
                                     />
                                     <label htmlFor="provider-openai" className="text-sm">
-                                      OpenAI (GPT-3.5-Turbo - Fast & Cost-Effective)
+                                      OpenAI (GPT-4o - Advanced Analysis with 128K Context)
                                     </label>
                                     {aiProvider === 'openai' && (
                                       <Badge variant={openaiApiKey ? "default" : "destructive"} className="text-xs">
@@ -379,7 +521,7 @@ function App() {
                                                   'Content-Type': 'application/json',
                                                 },
                                                 body: JSON.stringify({
-                                                  model: 'gpt-3.5-turbo',
+                                                  model: 'gpt-4o',
                                                   messages: [{ role: 'user', content: 'Test - respond with just "OK"' }],
                                                   max_tokens: 5
                                                 })
@@ -461,7 +603,7 @@ function App() {
                                                     'Content-Type': 'application/json',
                                                   },
                                                   body: JSON.stringify({
-                                                    model: 'gpt-3.5-turbo',
+                                                    model: 'gpt-4o',
                                                     messages: [
                                                       {
                                                         role: 'system',
@@ -570,7 +712,7 @@ function App() {
                                       <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" className="text-primary underline">
                                         OpenAI Platform
                                       </a>
-                                      {' '}• Fast analysis with GPT-3.5-turbo for quicker results
+                                      {' '}• Advanced analysis with GPT-4o using 128K context for comprehensive results
                                     </p>
                                   </div>
                                 )}
@@ -705,12 +847,17 @@ function App() {
               Analyze New Call
             </Button>
             
-            {processedTranscript && (
-              <Button variant="outline" onClick={() => {
-                TranscriptProcessor.downloadMarkdown(processedTranscript)
-              }}>
+            {originalTranscript && (
+              <Button variant="outline" onClick={downloadFullTranscript}>
                 <Download size={16} className="mr-2" />
-                Download Markdown
+                Download Full Transcript
+              </Button>
+            )}
+            
+            {rawAssemblyAIData && (
+              <Button variant="outline" onClick={downloadAssemblyAIData}>
+                <Download size={16} className="mr-2" />
+                Download AssemblyAI Data
               </Button>
             )}
           </div>
@@ -725,7 +872,7 @@ function App() {
               </CardTitle>
               <div className="flex items-center gap-2">
                 <Badge variant="default">
-                  {aiProvider === 'openai' && openaiApiKey ? 'OpenAI GPT-3.5-Turbo Analysis' : 
+                  {aiProvider === 'openai' && openaiApiKey ? 'OpenAI GPT-4o Analysis - 128K Context' : 
                    aiProvider === 'gemini' && geminiApiKey ? 'Gemini AI Analysis' : 'AI Analysis Required'}
                 </Badge>
               </div>
@@ -772,36 +919,20 @@ function App() {
                   <div key={stage} className="flex items-center justify-between">
                     <span className="text-sm capitalize">{stage}</span>
                     <div className="flex items-center gap-2">
-                      <Badge variant={data.quality === "Excellent" ? "default" : data.quality === "Good" ? "secondary" : "destructive"}>
+                      <Badge variant={
+                        data.quality === "Excellent" ? "default" : 
+                        data.quality === "Good" ? "secondary" : 
+                        data.quality === "Fair" ? "outline" : 
+                        "destructive"
+                      } className={
+                        data.quality === "Fair" ? "border-yellow-500 text-yellow-700 bg-yellow-50 hover:bg-yellow-100" : ""
+                      }>
                         {data.quality}
                       </Badge>
                       {getComplianceIcon(data.present, data.quality)}
                     </div>
                   </div>
                 ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendUp size={20} />
-                Sales Summary
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Opportunities Identified</p>
-                <p className="text-2xl font-bold text-accent">{analysis.salesInsights.opportunities.length}</p>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Successful Actions</p>
-                <p className="text-2xl font-bold text-green-600">{analysis.salesInsights.successful.length}</p>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Missed Opportunities</p>
-                <p className="text-2xl font-bold text-destructive">{analysis.salesInsights.missed.length}</p>
               </div>
             </CardContent>
           </Card>
@@ -820,65 +951,10 @@ function App() {
           </TabsList>
 
           <TabsContent value="transcript" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Call Transcript by Stage</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Tabs defaultValue="introduction" orientation="horizontal">
-                  <TabsList className="grid w-full grid-cols-6">
-                    <TabsTrigger value="introduction">Intro</TabsTrigger>
-                    <TabsTrigger value="diagnosis">Diagnosis</TabsTrigger>
-                    <TabsTrigger value="solution">Solution</TabsTrigger>
-                    <TabsTrigger value="upsell">Upsell</TabsTrigger>
-                    <TabsTrigger value="maintenance">Maintenance</TabsTrigger>
-                    <TabsTrigger value="closing">Closing</TabsTrigger>
-                  </TabsList>
-
-                  {["introduction", "diagnosis", "solution", "upsell", "maintenance", "closing"].map(stage => (
-                    <TabsContent key={stage} value={stage} className="mt-6">
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-lg font-semibold capitalize">{stage}</h3>
-                          <Badge variant={analysis.compliance[stage as keyof typeof analysis.compliance].quality === "Excellent" ? "default" : "secondary"}>
-                            {analysis.compliance[stage as keyof typeof analysis.compliance].quality}
-                          </Badge>
-                        </div>
-                        
-                        <div className="space-y-3">
-                          {getStageSegments(stage).length > 0 ? (
-                            getStageSegments(stage).map((segment, index) => (
-                              <div key={index} className="border-l-4 border-primary/20 pl-4 py-2">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <Badge variant="outline" className="text-xs">
-                                    {segment.speaker}
-                                  </Badge>
-                                  <span className="text-xs text-muted-foreground">{segment.timestamp}</span>
-                                </div>
-                                <p className="text-sm">{segment.text}</p>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="text-center py-8 text-muted-foreground">
-                              <p>No content identified for this stage</p>
-                            </div>
-                          )}
-                        </div>
-
-                        <Separator />
-                        
-                        <div className="bg-muted/50 p-4 rounded-lg">
-                          <h4 className="font-medium mb-2">Analysis Notes</h4>
-                          <p className="text-sm text-muted-foreground">
-                            {analysis.compliance[stage as keyof typeof analysis.compliance].notes}
-                          </p>
-                        </div>
-                      </div>
-                    </TabsContent>
-                  ))}
-                </Tabs>
-              </CardContent>
-            </Card>
+            <FullTranscriptView 
+              segments={analysis.transcript.segments} 
+              compliance={analysis.compliance}
+            />
           </TabsContent>
 
           <TabsContent value="compliance" className="space-y-6">
@@ -898,16 +974,18 @@ function App() {
                         {data.present ? "Yes" : "No"}
                       </Badge>
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm font-medium">Quality:</span>
-                      <Badge variant={data.quality === "Excellent" ? "default" : data.quality === "Good" ? "secondary" : "destructive"}>
-                        {data.quality}
-                      </Badge>
-                    </div>
                     <div>
-                      <p className="text-sm font-medium mb-2">Notes:</p>
+                      <p className="text-sm font-medium mb-2">Summary:</p>
                       <p className="text-sm text-muted-foreground">{data.notes}</p>
                     </div>
+                    {analysis.complianceSummaries && analysis.complianceSummaries[stage as keyof typeof analysis.complianceSummaries] && (
+                      <div className="mt-4 pt-3 border-t">
+                        <p className="text-sm font-medium mb-2">Detailed Analysis:</p>
+                        <p className="text-sm text-muted-foreground leading-relaxed">
+                          {analysis.complianceSummaries[stage as keyof typeof analysis.complianceSummaries]}
+                        </p>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ))}

@@ -37,6 +37,257 @@ export class OpenAIAnalyzer {
     this.apiKey = apiKey.trim()
   }
 
+  /**
+   * Upload markdown file to OpenAI and analyze with full context (no token limits)
+   */
+  private async uploadFileAndAnalyze(markdownContent: string): Promise<CallAnalysis> {
+    console.log('Starting file-based analysis with OpenAI...')
+    console.log('Markdown content length:', markdownContent.length)
+
+    try {
+      // Step 1: Create a file blob from the markdown content
+      const fileBlob = new Blob([markdownContent], { type: 'text/markdown' })
+      const fileName = `service-call-transcript-${Date.now()}.md`
+      
+      // Step 2: Upload file to OpenAI
+      console.log('Uploading file to OpenAI...')
+      const formData = new FormData()
+      formData.append('file', fileBlob, fileName)
+      formData.append('purpose', 'assistants')
+
+      const uploadResponse = await fetch('https://api.openai.com/v1/files', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: formData
+      })
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json().catch(() => ({}))
+        throw new Error(`File upload failed: ${uploadResponse.status} - ${errorData.error?.message || 'Unknown error'}`)
+      }
+
+      const fileData = await uploadResponse.json()
+      const fileId = fileData.id
+      console.log('File uploaded successfully, ID:', fileId)
+
+      // Step 3: Create assistant with file access
+      console.log('Creating OpenAI assistant with file access...')
+      const assistantResponse = await fetch('https://api.openai.com/v1/assistants', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        },
+        body: JSON.stringify({
+          name: 'Service Call Analyzer',
+          instructions: `You are an expert service call analyst. Analyze the complete service call transcript file and provide comprehensive analysis including:
+1. Stage categorization for ALL exchanges (introduction, diagnosis, solution, upsell, maintenance, closing)
+2. Compliance assessment for each stage
+3. Sales insights and opportunities
+4. Overall quality assessment
+
+Since you have access to the complete transcript file, provide thorough analysis of the entire conversation flow.`,
+          model: 'gpt-4o',
+          tools: [{ type: 'file_search' }],
+          tool_resources: {
+            file_search: {
+              vector_stores: [{ file_ids: [fileId] }]
+            }
+          }
+        })
+      })
+
+      if (!assistantResponse.ok) {
+        const errorData = await assistantResponse.json().catch(() => ({}))
+        throw new Error(`Assistant creation failed: ${assistantResponse.status} - ${errorData.error?.message || 'Unknown error'}`)
+      }
+
+      const assistant = await assistantResponse.json()
+      console.log('Assistant created:', assistant.id)
+
+      // Step 4: Create thread and run analysis
+      console.log('Creating thread and running analysis...')
+      const threadResponse = await fetch('https://api.openai.com/v1/threads', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        },
+        body: JSON.stringify({
+          messages: [{
+            role: 'user',
+            content: `Please analyze the complete service call transcript file and return a comprehensive JSON analysis with this exact structure:
+
+{
+  "callType": "HVAC Service Call",
+  "overallScore": 85,
+  "compliance": {
+    "introduction": {"present": true, "quality": "Good", "notes": "Professional greeting and identification"},
+    "diagnosis": {"present": true, "quality": "Excellent", "notes": "Thorough problem assessment"},
+    "solution": {"present": true, "quality": "Good", "notes": "Clear explanation of repairs"},
+    "upsell": {"present": true, "quality": "Excellent", "notes": "Effective equipment upgrade presentation"},
+    "maintenance": {"present": true, "quality": "Good", "notes": "Service agreement discussion"},
+    "closing": {"present": true, "quality": "Good", "notes": "Professional conclusion with payment"}
+  },
+  "salesInsights": {
+    "opportunities": ["Specific opportunity 1", "Specific opportunity 2"],
+    "successful": ["Successful technique 1", "Successful technique 2"],
+    "missed": ["Missed opportunity 1", "Missed opportunity 2"]
+  },
+  "transcript": {
+    "segments": [
+      {"speaker": "Customer", "timestamp": "0:00", "text": "Hello.", "stage": "introduction"},
+      {"speaker": "Technician", "timestamp": "0:05", "text": "Response text", "stage": "introduction"}
+    ]
+  }
+}
+
+CRITICAL: Include ALL exchanges from the transcript file in the segments array with accurate stage assignments. Quality should be: "Excellent", "Good", "Fair", or "Poor". Return ONLY the JSON object.`
+          }]
+        })
+      })
+
+      if (!threadResponse.ok) {
+        const errorData = await threadResponse.json().catch(() => ({}))
+        throw new Error(`Thread creation failed: ${threadResponse.status} - ${errorData.error?.message || 'Unknown error'}`)
+      }
+
+      const thread = await threadResponse.json()
+
+      // Step 5: Run the assistant
+      const runResponse = await fetch(`https://api.openai.com/v1/threads/${thread.id}/runs`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        },
+        body: JSON.stringify({
+          assistant_id: assistant.id
+        })
+      })
+
+      if (!runResponse.ok) {
+        const errorData = await runResponse.json().catch(() => ({}))
+        throw new Error(`Run creation failed: ${runResponse.status} - ${errorData.error?.message || 'Unknown error'}`)
+      }
+
+      const run = await runResponse.json()
+
+      // Step 6: Wait for completion and get result
+      console.log('Waiting for analysis to complete...')
+      const result = await this.waitForRunCompletion(thread.id, run.id)
+
+      // Step 7: Cleanup - delete the uploaded file
+      try {
+        await fetch(`https://api.openai.com/v1/files/${fileId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+          }
+        })
+        console.log('Uploaded file cleaned up')
+      } catch (cleanupError) {
+        console.warn('File cleanup failed (non-critical):', cleanupError)
+      }
+
+      return result
+
+    } catch (error) {
+      console.error('File-based analysis failed:', error)
+      console.log('Falling back to token-based analysis...')
+      
+      // Fallback to existing token-based method
+      return await this.analyzeServiceCall(markdownContent)
+    }
+  }
+
+  /**
+   * Wait for OpenAI assistant run to complete and extract result
+   */
+  private async waitForRunCompletion(threadId: string, runId: string): Promise<CallAnalysis> {
+    const maxAttempts = 30
+    const pollInterval = 2000 // 2 seconds
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const statusResponse = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'OpenAI-Beta': 'assistants=v2'
+          }
+        })
+
+        if (!statusResponse.ok) {
+          throw new Error(`Status check failed: ${statusResponse.status}`)
+        }
+
+        const status = await statusResponse.json()
+        console.log(`Run status: ${status.status} (attempt ${attempt + 1}/${maxAttempts})`)
+
+        if (status.status === 'completed') {
+          // Get the messages
+          const messagesResponse = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+            headers: {
+              'Authorization': `Bearer ${this.apiKey}`,
+              'OpenAI-Beta': 'assistants=v2'
+            }
+          })
+
+          if (!messagesResponse.ok) {
+            throw new Error(`Messages fetch failed: ${messagesResponse.status}`)
+          }
+
+          const messages = await messagesResponse.json()
+          const assistantMessage = messages.data.find((msg: any) => msg.role === 'assistant')
+
+          if (!assistantMessage) {
+            throw new Error('No assistant response found')
+          }
+
+          const content = assistantMessage.content[0]?.text?.value
+          if (!content) {
+            throw new Error('Empty assistant response')
+          }
+
+          console.log('Got assistant response, parsing JSON...')
+          const cleanedResponse = this.cleanJsonResponse(content)
+          const analysis = JSON.parse(cleanedResponse)
+
+          console.log('File-based analysis completed successfully')
+          
+          // Validate and normalize the response structure
+          const normalizedAnalysis = this.normalizeAnalysisResult(analysis)
+          console.log('File API analysis normalized:', {
+            hasTranscript: !!normalizedAnalysis.transcript,
+            hasSegments: Array.isArray(normalizedAnalysis.transcript?.segments),
+            segmentCount: normalizedAnalysis.transcript?.segments?.length || 0
+          })
+          
+          return normalizedAnalysis
+
+        } else if (status.status === 'failed' || status.status === 'cancelled') {
+          throw new Error(`Run failed with status: ${status.status}`)
+        }
+
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, pollInterval))
+
+      } catch (error) {
+        console.error(`Polling attempt ${attempt + 1} failed:`, error)
+        if (attempt === maxAttempts - 1) {
+          throw new Error('Run completion polling failed after all attempts')
+        }
+      }
+    }
+
+    throw new Error('Run did not complete within timeout period')
+  }
+
   private cleanJsonResponse(response: string): string {
     if (!response || response.trim().length === 0) {
       throw new Error('Empty response from OpenAI')
@@ -114,6 +365,69 @@ export class OpenAIAnalyzer {
       }
       
       throw new Error(`Could not parse JSON response. Error: ${parseError instanceof Error ? parseError.message : 'Unknown'}. Content preview: "${cleaned.substring(0, 300)}..."`)
+    }
+  }
+
+  /**
+   * Normalize analysis result to ensure consistent structure
+   */
+  private normalizeAnalysisResult(analysis: any): CallAnalysis {
+    console.log('Normalizing analysis result:', analysis)
+    
+    // If it's already properly structured, validate and return
+    if (analysis && typeof analysis === 'object') {
+      // Ensure we have the required structure
+      const normalized: CallAnalysis = {
+        callType: analysis.callType || 'maintenance',
+        overallScore: typeof analysis.overallScore === 'number' ? analysis.overallScore : 75,
+        compliance: analysis.compliance || {
+          introduction: { present: false, quality: 'Fair', notes: 'Not available' },
+          diagnosis: { present: false, quality: 'Fair', notes: 'Not available' },
+          solution: { present: false, quality: 'Fair', notes: 'Not available' },
+          upsell: { present: false, quality: 'Fair', notes: 'Not available' },
+          maintenance: { present: false, quality: 'Fair', notes: 'Not available' },
+          closing: { present: false, quality: 'Fair', notes: 'Not available' }
+        },
+        salesInsights: analysis.salesInsights || {
+          opportunities: [],
+          successful: [],
+          missed: []
+        },
+        transcript: {
+          segments: Array.isArray(analysis.transcript?.segments) ? analysis.transcript.segments : 
+                   Array.isArray(analysis.segments) ? analysis.segments : []
+        }
+      }
+      
+      console.log('Analysis normalized successfully:', {
+        hasCompliance: !!normalized.compliance,
+        hasSalesInsights: !!normalized.salesInsights,
+        hasTranscript: !!normalized.transcript,
+        segmentCount: normalized.transcript.segments.length
+      })
+      
+      return normalized
+    }
+    
+    // Fallback structure if analysis is invalid
+    console.warn('Analysis structure invalid, creating fallback')
+    return {
+      callType: 'maintenance',
+      overallScore: 50,
+      compliance: {
+        introduction: { present: false, quality: 'Fair', notes: 'Analysis failed - using fallback' },
+        diagnosis: { present: false, quality: 'Fair', notes: 'Analysis failed - using fallback' },
+        solution: { present: false, quality: 'Fair', notes: 'Analysis failed - using fallback' },
+        upsell: { present: false, quality: 'Fair', notes: 'Analysis failed - using fallback' },
+        maintenance: { present: false, quality: 'Fair', notes: 'Analysis failed - using fallback' },
+        closing: { present: false, quality: 'Fair', notes: 'Analysis failed - using fallback' }
+      },
+      salesInsights: {
+        opportunities: [],
+        successful: [],
+        missed: []
+      },
+      transcript: { segments: [] }
     }
   }
 
@@ -236,8 +550,8 @@ export class OpenAIAnalyzer {
   }
 
   private async makeRequest(messages: any[], temperature = 0.3, fastMode = true): Promise<any> {
-    // Use faster model for most operations but increase token limits significantly
-    const model = fastMode ? 'gpt-3.5-turbo' : 'gpt-4o-mini'
+    // Use GPT-4o for all operations to leverage 128K context window
+    const model = 'gpt-4o'
     
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -249,7 +563,7 @@ export class OpenAIAnalyzer {
         model,
         messages,
         temperature,
-        max_tokens: fastMode ? 4096 : 4096 // Maximum tokens for complete responses
+        max_tokens: 4096 // Conservative output token limit for GPT-4o
       })
     })
 
@@ -308,7 +622,7 @@ export class OpenAIAnalyzer {
             speaker: currentSpeaker,
             text: currentText.trim(),
             timestamp: currentTimestamp || `${Math.floor(exchangeIndex * 0.5)}:${(exchangeIndex * 30 % 60).toString().padStart(2, '0')}`,
-            stage: this.determineStage(currentText, exchangeIndex, segments.length)
+            stage: 'pending' // Will be assigned by OpenAI
           })
           exchangeIndex++
         }
@@ -347,7 +661,7 @@ export class OpenAIAnalyzer {
         speaker: currentSpeaker,
         text: currentText.trim(),
         timestamp: currentTimestamp || `${Math.floor(exchangeIndex * 0.5)}:${(exchangeIndex * 30 % 60).toString().padStart(2, '0')}`,
-        stage: this.determineStage(currentText, exchangeIndex, segments.length)
+        stage: 'pending' // Will be assigned by OpenAI
       })
     }
     
@@ -367,63 +681,152 @@ export class OpenAIAnalyzer {
       })))
     }
     
-    return segments
+    // Now let OpenAI assign stages to all segments
+    console.log('Requesting OpenAI to assign stages to segments...')
+    return await this.assignStagesWithOpenAI(segments)
   }
 
   /**
-   * Determine the likely stage for a text segment based on content and position
+   * Use OpenAI to assign stages to parsed segments
    */
-  private determineStage(text: string, index: number, totalSegments: number): string {
-    const lowerText = text.toLowerCase()
-    const position = totalSegments > 0 ? index / Math.max(totalSegments - 1, 1) : 0
-    
-    // Introduction indicators
-    if (lowerText.includes('hello') || lowerText.includes('good morning') || 
-        lowerText.includes('this is') || lowerText.includes('from') ||
-        index === 0) {
-      return 'introduction'
+  private async assignStagesWithOpenAI(segments: any[]): Promise<any[]> {
+    if (segments.length === 0) {
+      return segments
     }
-    
-    // Closing indicators
-    if (lowerText.includes('thank you') || lowerText.includes('goodbye') || 
-        lowerText.includes('take care') || lowerText.includes('have a') ||
-        position > 0.8) {
-      return 'closing'
+
+    console.log(`Assigning stages to ${segments.length} segments using OpenAI...`)
+
+    try {
+      // Create a prompt for OpenAI to assign stages
+      const segmentsText = segments.map((seg, index) => 
+        `${index + 1}. ${seg.speaker}: ${seg.text}`
+      ).join('\n\n')
+
+      const prompt = `You are analyzing a service call transcript. Carefully assign each exchange to the most appropriate stage based on the content and context.
+
+STAGE DEFINITIONS:
+• introduction: Greetings, initial contact, identifying the customer, brief pleasantries, establishing rapport
+• diagnosis: Problem identification, troubleshooting questions, understanding symptoms, investigating issues, assessing current conditions
+• solution: Explaining the repair work done, presenting solutions, discussing technical procedures, showing equipment options
+• upsell: Offering additional services, upgrades, premium options, add-ons, enhanced products or services
+• maintenance: Discussing service agreements, preventive maintenance plans, future care, ongoing support programs
+• closing: Payment processing, finalizing agreements, scheduling, goodbyes, next steps, wrapping up
+
+ANALYSIS GUIDELINES:
+- Consider the CONTENT more than position in the call
+- If discussing equipment options/upgrades with costs = likely "upsell" 
+- If explaining what was fixed/repaired = "solution"
+- If asking about problems/symptoms = "diagnosis"
+- If discussing service plans/warranties = "maintenance"
+- Cat interruptions, phone calls, or brief pleasantries can stay with surrounding context
+- Look for transitions: calls often go diagnosis → solution → upsell → maintenance → closing
+
+EXAMPLES:
+- "This next one may or may not come up, but I am including it as a line item just in case it becomes relevant. Sometimes when we have water damage, I do see decayed plywood..." = "solution" (explaining potential repair work)
+- "So remember before how we had that below freezing temperature at 41..." = "solution" (explaining repair results)
+- "Are you familiar with natural gas phase outs?" = "upsell" (setting up equipment upgrade discussion)
+- "We have 120 month, 8.99 interest with autopay..." = "upsell" (discussing financing for upgrades)
+- "Let me go ahead and get the $1,000 for today..." = "closing" (payment processing)
+
+Transcript exchanges:
+${segmentsText}
+
+Return ONLY a JSON array with this exact structure:
+{"exchange": 1, "stage": "introduction"}
+
+Transcript exchanges:
+${segmentsText}
+
+JSON array:`
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an expert service call analyst specializing in HVAC/home services. Analyze each exchange carefully and assign accurate stages based on content, not just position. Return ONLY valid JSON arrays without markdown formatting.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          temperature: 0.1,
+          max_tokens: Math.min(4096, segments.length * 50)
+        })
+      })
+
+      if (!response.ok) {
+        console.warn('OpenAI stage assignment failed, using fallback stages')
+        return this.assignFallbackStages(segments)
+      }
+
+      const data = await response.json()
+      const content = data.choices?.[0]?.message?.content?.trim()
+
+      if (!content) {
+        console.warn('Empty response from OpenAI, using fallback stages')
+        return this.assignFallbackStages(segments)
+      }
+
+      // Parse the OpenAI response
+      const cleaned = this.cleanJsonResponse(content)
+      const stageAssignments = JSON.parse(cleaned)
+
+      console.log('OpenAI assigned stages:', stageAssignments.slice(0, 5))
+
+      // Apply the stage assignments
+      const updatedSegments = segments.map((segment, index) => {
+        const assignment = stageAssignments.find((a: any) => a.exchange === index + 1)
+        return {
+          ...segment,
+          stage: assignment?.stage || this.getFallbackStage(index, segments.length)
+        }
+      })
+
+      // Validate stage distribution
+      const stageDistribution = updatedSegments.reduce((acc, seg) => {
+        acc[seg.stage] = (acc[seg.stage] || 0) + 1
+        return acc
+      }, {} as Record<string, number>)
+
+      console.log('Final stage distribution:', stageDistribution)
+      return updatedSegments
+
+    } catch (error) {
+      console.error('Error in OpenAI stage assignment:', error)
+      console.log('Falling back to rule-based stage assignment')
+      return this.assignFallbackStages(segments)
     }
+  }
+
+  /**
+   * Fallback stage assignment if OpenAI fails
+   */
+  private assignFallbackStages(segments: any[]): any[] {
+    return segments.map((segment, index) => ({
+      ...segment,
+      stage: this.getFallbackStage(index, segments.length)
+    }))
+  }
+
+  /**
+   * Simple fallback stage assignment based on position
+   */
+  private getFallbackStage(index: number, totalSegments: number): string {
+    const position = index / Math.max(totalSegments - 1, 1)
     
-    // Problem diagnosis indicators
-    if (lowerText.includes('problem') || lowerText.includes('issue') || 
-        lowerText.includes('not working') || lowerText.includes('broken') ||
-        lowerText.includes('what seems')) {
-      return 'diagnosis'
-    }
-    
-    // Solution indicators
-    if (lowerText.includes('fix') || lowerText.includes('repair') || 
-        lowerText.includes('replace') || lowerText.includes('solution') ||
-        lowerText.includes('install')) {
-      return 'solution'
-    }
-    
-    // Upsell indicators
-    if (lowerText.includes('additional') || lowerText.includes('upgrade') || 
-        lowerText.includes('also recommend') || lowerText.includes('better option') ||
-        lowerText.includes('premium')) {
-      return 'upsell'
-    }
-    
-    // Maintenance indicators
-    if (lowerText.includes('maintenance') || lowerText.includes('service plan') || 
-        lowerText.includes('regular') || lowerText.includes('annual') ||
-        lowerText.includes('prevent')) {
-      return 'maintenance'
-    }
-    
-    // Default based on position
-    if (position < 0.2) return 'introduction'
-    if (position < 0.4) return 'diagnosis'
-    if (position < 0.6) return 'solution'
-    if (position < 0.8) return 'upsell'
+    if (position < 0.15) return 'introduction'
+    if (position < 0.35) return 'diagnosis'
+    if (position < 0.55) return 'solution'
+    if (position < 0.75) return 'upsell'
+    if (position < 0.9) return 'maintenance'
     return 'closing'
   }
 
@@ -1297,75 +1700,6 @@ Call segments: ${JSON.stringify(limitedSegments)}${markdownContext ? `\n\nOrigin
     return result.slice(0, maxSegments)
   }
 
-  private repairTruncatedAnalysis(jsonStr: string): string | null {
-    try {
-      // If the JSON is truncated, try to complete it
-      if (!jsonStr.includes('"salesInsights"')) {
-        // Find the last complete compliance stage
-        let lastCompleteStage = ''
-        const stages = ['introduction', 'diagnosis', 'solution', 'upsell', 'maintenance', 'closing']
-        
-        for (const stage of stages.reverse()) {
-          if (jsonStr.includes(`"${stage}"`)) {
-            lastCompleteStage = stage
-            break
-          }
-        }
-        
-        if (lastCompleteStage) {
-          // Try to find the end of the last complete stage
-          const stagePattern = new RegExp(`"${lastCompleteStage}"\\s*:\\s*{[^}]*}`, 'g')
-          const matches = jsonStr.match(stagePattern)
-          if (matches) {
-            const lastMatch = matches[matches.length - 1]
-            const endIndex = jsonStr.lastIndexOf(lastMatch) + lastMatch.length
-            
-            // Complete the truncated JSON
-            let completed = jsonStr.substring(0, endIndex)
-            
-            // Add missing stages
-            const missingStages = stages.filter(s => !completed.includes(`"${s}"`))
-            for (const stage of missingStages) {
-              completed += `,\n    "${stage}": {"present": false, "quality": "Poor", "notes": "Not detected"}`
-            }
-            
-            // Add sales insights
-            completed += `\n  },\n  "salesInsights": {\n    "opportunities": [],\n    "successful": [],\n    "missed": []\n  }\n}`
-            
-            // Test if valid
-            JSON.parse(completed)
-            return completed
-          }
-        }
-      }
-      
-      // If it has compliance but truncated salesInsights
-      if (jsonStr.includes('"compliance"') && !jsonStr.includes('"missed"')) {
-        // Find where to add the closing
-        const lastBrace = jsonStr.lastIndexOf('}')
-        if (lastBrace > 0) {
-          let completed = jsonStr.substring(0, lastBrace)
-          
-          // Ensure compliance is properly closed
-          if (!completed.includes('"salesInsights"')) {
-            completed += `\n  },\n  "salesInsights": {\n    "opportunities": [],\n    "successful": [],\n    "missed": []\n  }\n}`
-          } else {
-            completed += '\n  }\n}'
-          }
-          
-          // Test if valid
-          JSON.parse(completed)
-          return completed
-        }
-      }
-      
-    } catch (error) {
-      console.log('Repair attempt failed:', error)
-    }
-    
-    return null
-  }
-
   private validateAndFixCombinedAnalysis(parsed: any): {
     compliance: CallAnalysis['compliance'],
     salesInsights: CallAnalysis['salesInsights']
@@ -1510,12 +1844,27 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
       throw new Error('Empty transcript provided')
     }
 
-    console.log('=== OpenAI Analysis Starting (Markdown Mode) ===')
+    console.log('=== OpenAI Analysis Starting ===')
     console.log('Input markdown length:', markdownTranscript.length)
     console.log('Input preview (first 500 chars):', markdownTranscript.substring(0, 500))
     console.log('Contains markdown headers:', markdownTranscript.includes('###') || markdownTranscript.includes('##'))
     console.log('Contains speaker labels:', markdownTranscript.includes('Technician') || markdownTranscript.includes('Customer'))
     console.log('Number of lines:', markdownTranscript.split('\n').length)
+
+    // Try file-based analysis first for comprehensive results
+    if (markdownTranscript.length > 5000) { // Use file API for longer transcripts
+      console.log('Long transcript detected, using OpenAI File API for comprehensive analysis...')
+      try {
+        const fileResult = await this.uploadFileAndAnalyze(markdownTranscript)
+        console.log('File-based analysis completed successfully!')
+        return fileResult
+      } catch (fileError) {
+        console.warn('File-based analysis failed, falling back to token-based method:', fileError)
+        // Continue to token-based analysis below
+      }
+    }
+
+    console.log('Using token-based analysis (segments may be limited)...')
 
     try {
       console.log('Starting fast OpenAI analysis with markdown input...')
@@ -1525,8 +1874,8 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
       let segments = await this.parseMarkdownTranscript(markdownTranscript)
       console.log(`Parsed into ${segments.length} segments`)
       
-      // If markdown parsing failed, try direct transcript segmentation
-      if (segments.length === 0) {
+      // Ensure we have some segments - if not, create basic fallback
+      if (!segments || segments.length === 0) {
         console.log('Markdown parsing failed, attempting direct transcript segmentation...')
         
         // Extract raw transcript from markdown
@@ -1541,10 +1890,17 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
         
         segments = await this.segmentTranscript(rawTranscript)
         console.log(`Direct segmentation produced ${segments.length} segments`)
-      }
-      
-      if (segments.length === 0) {
-        throw new Error('No segments generated from markdown transcript')
+        
+        // Final fallback - ensure we have at least one segment
+        if (!segments || segments.length === 0) {
+          console.warn('All segmentation methods failed, creating emergency fallback segments')
+          segments = [{
+            speaker: 'Technician',
+            timestamp: '0:00',
+            text: 'Service call transcript processed with limited data',
+            stage: 'introduction'
+          }]
+        }
       }
       
       // Debug: Show sample segments
@@ -1562,9 +1918,20 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
 
       // Step 2: Combined fast analysis with markdown context
       console.log('Step 2: AI analysis of parsed segments...')
-      const combined = await this.analyzeCombined(segments, markdownTranscript)
-      const compliance = combined.compliance
-      const salesInsights = combined.salesInsights
+      let combined
+      let compliance
+      let salesInsights
+      
+      try {
+        combined = await this.analyzeCombined(segments, markdownTranscript)
+        compliance = combined.compliance
+        salesInsights = combined.salesInsights
+      } catch (analysisError) {
+        console.error('Combined analysis failed, using fallback:', analysisError)
+        const fallback = this.createFallbackCombinedAnalysis(segments)
+        compliance = fallback.compliance
+        salesInsights = fallback.salesInsights
+      }
       
       console.log('Analysis completed - checking results...')
       console.log('Compliance stages found:', Object.keys(compliance))
@@ -1575,7 +1942,7 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
       })
 
       // Fast scoring
-      const complianceScores = Object.values(compliance).map(stage => {
+      const complianceScores = Object.values(compliance).map((stage: any) => {
         if (!stage.present) return 0
         switch (stage.quality) {
           case 'Excellent': return 100
@@ -1599,13 +1966,19 @@ Segments: ${JSON.stringify(segments.slice(0, 20), null, 0)}`
         overallScore,
         compliance,
         salesInsights,
-        transcript: { segments }
+        transcript: { segments: Array.isArray(segments) ? segments : [] } // Always ensure segments is an array
       }
 
       console.log('=== OpenAI Analysis Complete ===')
       console.log('Call type:', callType)
       console.log('Overall score:', overallScore)
-      console.log('Final segments:', segments.length)
+      console.log('Final segments count:', result.transcript.segments.length)
+      console.log('Result structure valid:', {
+        hasCompliance: !!result.compliance,
+        hasSalesInsights: !!result.salesInsights,
+        hasTranscript: !!result.transcript,
+        hasSegments: Array.isArray(result.transcript.segments)
+      })
       
       return result
 
@@ -1628,7 +2001,7 @@ export async function testOpenAIAPI(apiKey: string): Promise<{ success: boolean;
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4o',
         messages: [{ role: 'user', content: 'Test - respond with just "OK"' }],
         max_tokens: 5
       })

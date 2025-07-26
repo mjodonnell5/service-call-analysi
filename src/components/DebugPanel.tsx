@@ -98,13 +98,12 @@ export function DebugPanel({ analysis, transcript, processedTranscript, rawAssem
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="processed">Processed</TabsTrigger>
             <TabsTrigger value="stages">Stage Analysis</TabsTrigger>
             <TabsTrigger value="segments">Segments</TabsTrigger>
-            <TabsTrigger value="assemblyai">AssemblyAI Raw</TabsTrigger>
-            <TabsTrigger value="raw">All Raw Data</TabsTrigger>
+            <TabsTrigger value="raw">Data Summary</TabsTrigger>
           </TabsList>
           
           <TabsContent value="overview" className="space-y-4">
@@ -282,14 +281,23 @@ export function DebugPanel({ analysis, transcript, processedTranscript, rawAssem
 
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-sm">Processed Markdown Preview</CardTitle>
+                    <CardTitle className="text-sm">Processed Markdown Info</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="max-h-64 overflow-y-auto p-3 bg-muted rounded-md">
-                      <pre className="text-xs whitespace-pre-wrap font-mono">
-                        {processedTranscript.markdown.substring(0, 2000)}
-                        {processedTranscript.markdown.length > 2000 && '\n\n... [Preview truncated. Download full markdown to see complete content]'}
-                      </pre>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-sm">Markdown Length:</span>
+                        <Badge variant="outline">{processedTranscript.markdown.length.toLocaleString()} chars</Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm">First Exchange:</span>
+                        <Badge variant="outline">
+                          {processedTranscript.markdown.includes('### Exchange 1:') ? 'Found' : 'Missing'}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Download the full markdown file to view complete content. Preview removed to prevent UI crashes.
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
@@ -352,102 +360,43 @@ export function DebugPanel({ analysis, transcript, processedTranscript, rawAssem
           
           <TabsContent value="segments">
             <div className="space-y-2 max-h-96 overflow-y-auto">
-              {analysis?.transcript?.segments?.map((segment: any, index: number) => (
-                <div key={index} className="border rounded p-3 space-y-1">
-                  <div className="flex items-center gap-2 text-xs">
-                    <Badge variant="outline">{segment.speaker}</Badge>
-                    <Badge variant="secondary">{segment.stage}</Badge>
-                    <span className="text-muted-foreground">{segment.timestamp}</span>
-                  </div>
-                  <p className="text-sm">{segment.text || <em className="text-muted-foreground">No text</em>}</p>
-                </div>
-              )) || <p className="text-muted-foreground">No segments available</p>}
-            </div>
-          </TabsContent>
-          
-          <TabsContent value="assemblyai">
-            {rawAssemblyAI ? (
-              <div className="space-y-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Microphone size={16} />
-                      AssemblyAI Raw Response
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {/* Key Information Summary */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <Card className="bg-muted/30">
-                          <CardContent className="p-3">
-                            <div className="text-xs text-muted-foreground">Status</div>
-                            <div className="text-sm font-medium">{rawAssemblyAI.status || 'Unknown'}</div>
-                          </CardContent>
-                        </Card>
-                        <Card className="bg-muted/30">
-                          <CardContent className="p-3">
-                            <div className="text-xs text-muted-foreground">Utterances</div>
-                            <div className="text-sm font-medium">{rawAssemblyAI.utterances?.length || 0}</div>
-                          </CardContent>
-                        </Card>
-                        <Card className="bg-muted/30">
-                          <CardContent className="p-3">
-                            <div className="text-xs text-muted-foreground">Text Length</div>
-                            <div className="text-sm font-medium">{rawAssemblyAI.text?.length || 0} chars</div>
-                          </CardContent>
-                        </Card>
+              {(() => {
+                const segments = analysis?.transcript?.segments || []
+                const maxDisplaySegments = 50 // Limit to prevent crashes
+                const displaySegments = segments.slice(0, maxDisplaySegments)
+                
+                return (
+                  <>
+                    {segments.length > maxDisplaySegments && (
+                      <Alert>
+                        <AlertDescription>
+                          Showing first {maxDisplaySegments} of {segments.length} segments to prevent UI crashes. 
+                          Use Export Debug Data to access all segments.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    {displaySegments.map((segment: any, index: number) => (
+                      <div key={index} className="border rounded p-3 space-y-1">
+                        <div className="flex items-center gap-2 text-xs">
+                          <Badge variant="outline">{segment.speaker}</Badge>
+                          <Badge variant="secondary">{segment.stage}</Badge>
+                          <span className="text-muted-foreground">{segment.timestamp}</span>
+                        </div>
+                        <p className="text-sm">
+                          {segment.text?.length > 200 
+                            ? `${segment.text.substring(0, 200)}...` 
+                            : segment.text || <em className="text-muted-foreground">No text</em>
+                          }
+                        </p>
                       </div>
-
-                      {/* Speaker Detection Info */}
-                      {rawAssemblyAI.utterances && rawAssemblyAI.utterances.length > 0 && (
-                        <Card>
-                          <CardHeader>
-                            <CardTitle className="text-xs">Speaker Detection Results</CardTitle>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="space-y-2">
-                              <div className="text-xs">
-                                <strong>Speakers Found:</strong> {[...new Set(rawAssemblyAI.utterances.map((u: any) => u.speaker))].join(', ')}
-                              </div>
-                              <div className="text-xs">
-                                <strong>First 3 Utterances:</strong>
-                              </div>
-                              <div className="space-y-1">
-                                {rawAssemblyAI.utterances.slice(0, 3).map((utterance: any, index: number) => (
-                                  <div key={index} className="text-xs bg-muted/50 p-2 rounded">
-                                    <strong>Speaker {utterance.speaker}:</strong> {utterance.text?.substring(0, 100)}
-                                    {utterance.text?.length > 100 && '...'}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      )}
-
-                      {/* Full Raw Data */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-xs">Complete AssemblyAI Response</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <pre className="text-xs bg-muted p-4 rounded overflow-auto max-h-96 whitespace-pre-wrap">
-                            {JSON.stringify(rawAssemblyAI, null, 2)}
-                          </pre>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            ) : (
-              <Alert>
-                <AlertDescription>
-                  No AssemblyAI raw data available. This data is captured when you upload and transcribe an audio file.
-                </AlertDescription>
-              </Alert>
-            )}
+                    ))}
+                    {displaySegments.length === 0 && (
+                      <p className="text-muted-foreground">No segments available</p>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
           </TabsContent>
           
           <TabsContent value="raw">
@@ -455,45 +404,60 @@ export function DebugPanel({ analysis, transcript, processedTranscript, rawAssem
               <div className="space-y-4">
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-sm">Analysis Object</CardTitle>
+                    <CardTitle className="text-sm">Analysis Summary</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <pre className="text-xs bg-muted p-4 rounded overflow-auto max-h-64">
-                      {JSON.stringify(analysis, null, 2)}
-                    </pre>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-sm">Call Type:</span>
+                        <Badge variant="outline">{analysis?.callType || 'Unknown'}</Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm">Overall Score:</span>
+                        <Badge variant="outline">{analysis?.overallScore || 0}</Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm">Segments Count:</span>
+                        <Badge variant="outline">{analysis?.transcript?.segments?.length || 0}</Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm">Sales Opportunities:</span>
+                        <Badge variant="outline">{analysis?.salesInsights?.opportunities?.length || 0}</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-4">
+                        Full analysis object and transcript display removed to prevent UI crashes. Use Export Debug Data to download complete information.
+                      </p>
+                    </div>
                   </CardContent>
                 </Card>
                 
-                {transcript && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-sm">Original Transcript</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <pre className="text-xs bg-muted p-4 rounded overflow-auto max-h-64">
-                        {transcript}
-                      </pre>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {rawAssemblyAI && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-sm">AssemblyAI Raw Response</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <pre className="text-xs bg-muted p-4 rounded overflow-auto max-h-64">
-                        {JSON.stringify(rawAssemblyAI, null, 2)}
-                      </pre>
-                    </CardContent>
-                  </Card>
-                )}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Transcript Info</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-sm">Original Length:</span>
+                        <Badge variant="outline">{transcript?.length?.toLocaleString() || 0} chars</Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm">Contains Exchanges:</span>
+                        <Badge variant="outline">
+                          {transcript?.includes('### Exchange') ? 'Yes' : 'No'}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Original transcript display removed to prevent crashes. Use Export Debug Data to access full content.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             ) : (
               <Alert>
                 <AlertDescription>
-                  Click "Show Raw" above to view the complete analysis object, original transcript, and AssemblyAI raw data.
+                  Click "Show Raw" above to view analysis and transcript summaries. Full content removed to prevent UI crashes.
                 </AlertDescription>
               </Alert>
             )}

@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { useKV } from '@github/spark/hooks'
+import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { 
   TranscriptionConfig, 
   validateTranscriptionConfig, 
@@ -21,7 +21,7 @@ interface ConfigurationPanelProps {
 }
 
 export function ConfigurationPanel({ onConfigured }: ConfigurationPanelProps) {
-  const [config, setConfig] = useKV<TranscriptionConfig | null>('transcription-config', null)
+  const [config, setConfig] = useLocalStorage<TranscriptionConfig | null>('transcription-config', null)
   const [tempConfig, setTempConfig] = useState<Partial<TranscriptionConfig>>(
     config || { provider: 'assemblyai', apiKey: '' }
   )
